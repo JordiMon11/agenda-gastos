@@ -44,7 +44,8 @@ app.use('/vendor', express.static(path.join(ROOT, 'node_modules', 'chart.js', 'd
 // ---------- Rutas públicas ----------
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 app.get('/api/public-config', (req, res) =>
-  res.json({ downloadUrl: process.env.DESKTOP_DOWNLOAD_URL || null, releasesUrl: process.env.RELEASES_URL || null })
+  res.json({ downloadUrl: process.env.DESKTOP_DOWNLOAD_URL || 'https://github.com/JordiMon11/agenda-gastos/releases/latest/download/Agenda-Gastos-Setup.exe',
+    releasesUrl: process.env.RELEASES_URL || 'https://github.com/JordiMon11/agenda-gastos/releases/latest', })
 );
 // Disparador externo de los avisos (GitHub Actions lo llama cada 30 min y así también despierta el servidor gratuito).
 // Es seguro dejarlo público: solo revisa avisos pendientes y cada aviso se envía una única vez.
