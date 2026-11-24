@@ -15,6 +15,7 @@ const { weekSummary, round } = require('./summary');
 const S = require('./security');
 const auth = require('./auth');
 const finance = require('./finance');
+const admin = require('./admin');
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -68,7 +69,8 @@ app.use('/vendor', express.static(path.join(ROOT, 'node_modules', 'chart.js', 'd
 app.get('/healthz', (req, res) => res.json({ ok: true, cifrado: S.hasKey() }));
 app.get('/api/public-config', (req, res) =>
   res.json({ downloadUrl: process.env.DESKTOP_DOWNLOAD_URL || 'https://github.com/JordiMon11/agenda-gastos/releases/latest/download/Agenda-Gastos-Setup.exe',
-    releasesUrl: process.env.RELEASES_URL || 'https://github.com/JordiMon11/agenda-gastos/releases/latest', })
+    releasesUrl: process.env.RELEASES_URL || 'https://github.com/JordiMon11/agenda-gastos/releases/latest',
+    banner: db.settings.banner || '', bannerType: db.settings.bannerType || 'info', registrationOpen: !db.users.length || db.settings.registrationOpen !== false })
 );
 // Disparador externo de los avisos (GitHub Actions lo llama cada 30 min y así también despierta el servidor gratuito).
 // Es seguro dejarlo público: solo revisa avisos pendientes y cada aviso se envía una única vez.
@@ -87,6 +89,7 @@ app.use('/api', auth.publicRouter);
 app.use('/api', auth.authMiddleware);
 app.use('/api', auth.router);
 app.use('/api', finance.router);
+app.use('/api/admin', admin.router);
 
 // ---------- Categorías ----------
 const mine = (list, req) => list.filter((x) => x.userId === req.user.id);
@@ -281,6 +284,7 @@ async function start(port = Number(process.env.PORT || 3000)) {
   await store.init();
   migrateCategoryIcons();
   auth.migrateSessions();
+  auth.ensureAdmin();
   if (!S.hasKey()) console.warn("   ⚠ Falta APP_SECRET: los secretos del 2FA se guardarán sin cifrar");
   return new Promise((resolve, reject) => {
     const server = app.listen(port, '0.0.0.0', () => {

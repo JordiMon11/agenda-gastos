@@ -212,6 +212,20 @@ function securityChangeEmail(user, text) {
   };
 }
 
+function resetEmail(user, link) {
+  return {
+    to: user.email,
+    subject: 'Restablece tu contraseña de Agenda de Gastos',
+    html: layout(
+      'Enlace para crear una contraseña nueva (caduca en 1 hora)',
+      'Restablecer contraseña',
+      `<p style="margin:0 0 16px">Hola ${esc(user.name)}, hemos recibido una petición para restablecer tu contraseña. Pulsa el botón para crear una nueva. El enlace caduca en <b>1 hora</b> y solo funciona una vez.</p>
+       <a href="${esc(link)}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:10px">Crear contraseña nueva</a>
+       <p style="margin:18px 0 0;color:#6b7280;font-size:13px">Si no lo has pedido tú, ignora este correo: tu contraseña no cambiará.</p>`
+    ),
+  };
+}
+
 function testEmail(user) {
   return {
     to: user.email,
@@ -220,4 +234,4 @@ function testEmail(user) {
   };
 }
 
-module.exports = { send, configured, useBrevo, welcomeEmail, reminderEmail, weeklyEmail, testEmail, newLoginEmail, lockedEmail, securityChangeEmail, OUTBOX };
+module.exports = { send, configured, useBrevo, welcomeEmail, reminderEmail, weeklyEmail, testEmail, newLoginEmail, lockedEmail, securityChangeEmail, resetEmail, OUTBOX };

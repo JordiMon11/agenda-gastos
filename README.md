@@ -91,3 +91,11 @@ render.yaml Despliegue en Render
 - **Secreto del 2FA cifrado** con AES-256-GCM (clave en la variable `APP_SECRET`).
 - **Cabeceras de seguridad**: CSP estricta (sin scripts en línea), HSTS, X-Frame-Options, Referrer-Policy, Permissions-Policy, etc.
 - **Avisos por correo** de accesos desde dispositivos nuevos, bloqueos y cambios de seguridad. Desde el apartado *Seguridad* puedes ver y cerrar las sesiones abiertas y consultar la actividad.
+
+## Administración
+
+- El **primer usuario registrado** es administrador. También se pueden fijar administradores con la variable `ADMIN_EMAILS` (separados por comas) o desde el propio panel.
+- Para entrar en la administración es **obligatorio tener el 2FA activado**.
+- Desde el panel: resumen de usuarios y registros, estado del sistema, lista de usuarios con buscador y filtros, editar nombre y correo, enviar enlace para restablecer contraseña, generar contraseña temporal (obliga a cambiarla al entrar), quitar el 2FA, desbloquear, cerrar sesiones, dar o quitar administrador, desactivar o reactivar cuentas y eliminarlas.
+- **Ajustes de la app**: abrir o cerrar el registro de usuarios y publicar un aviso para todos.
+- Todas las acciones quedan en el **registro de acciones**. El administrador **no ve los gastos ni los ingresos** de los usuarios, solo cuántos registros tienen.

@@ -25,7 +25,19 @@ function publicUser(u) {
     twoFactor: !!u.totp,
     recoveryLeft: u.totp ? (u.recoveryCodes || []).length : 0,
     passwordChangedAt: u.passwordChangedAt || u.createdAt,
+    isAdmin: isAdmin(u),
+    mustChangePassword: !!u.mustChangePassword,
   };
+}
+const ADMIN_EMAILS = String(process.env.ADMIN_EMAILS || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean);
+const isAdmin = (u) => u.role === 'admin' || ADMIN_EMAILS.includes(u.email);
+// Si no hay ningún administrador, el primer usuario registrado pasa a serlo
+function ensureAdmin() {
+  if (!db.users.length || db.users.some(isAdmin)) return;
+  const first = [...db.users].sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''))[0];
+  first.role = 'admin';
+  store.save();
+  console.log('   Administrador:', first.email);
 }
 
 // ---------- Registro de actividad ----------
@@ -42,6 +54,9 @@ const EVENT_TEXT = {
   recovery_regenerated: 'Códigos de recuperación renovados',
   session_revoked: 'Sesión cerrada en otro dispositivo',
   locked: 'Acceso bloqueado temporalmente por intentos fallidos',
+  password_reset_requested: 'Solicitud para restablecer la contraseña',
+  password_reset: 'Contraseña restablecida con el enlace del correo',
+  admin_change: 'Cambio realizado por un administrador',
 };
 function logEvent(user, type, req) {
   db.securityLog.push({ id: store.id(), userId: user.id, type, ip: S.clientIp(req), device: S.deviceName(req.get('user-agent')), at: new Date().toISOString() });
@@ -61,6 +76,7 @@ function createSession(req, res, user) {
   db.sessions.push({ id: store.id(), hash: S.sha256(token), userId: user.id, createdAt: now, lastSeen: now, expires: now + S.SESSION_DAYS * 86400000, ua, ip: S.clientIp(req) });
   S.setSessionCookie(req, res, token);
   logEvent(user, 'login', req);
+  user.lastActiveAt = new Date().toISOString();
   store.save();
   // Aviso por correo si es un dispositivo nuevo
   if (!known && db.sessions.filter((s) => s.userId === user.id).length > 1) {
@@ -83,14 +99,18 @@ function authMiddleware(req, res, next) {
   const s = hash && db.sessions.find((x) => x.hash === hash);
   if (!s || s.expires < Date.now()) return res.status(401).json({ error: 'No has iniciado sesión' });
   const user = db.users.find((u) => u.id === s.userId);
-  if (!user) return res.status(401).json({ error: 'No has iniciado sesión' });
+  if (!user || user.blocked) return res.status(401).json({ error: 'No has iniciado sesión' });
   if (Date.now() - s.lastSeen > 5 * 60 * 1000) {
     s.lastSeen = Date.now();
     s.ip = S.clientIp(req);
+    user.lastActiveAt = new Date().toISOString();
     store.save();
   }
   req.user = user;
   req.session = s;
+  // Con una contraseña temporal solo se puede consultar el perfil y cambiarla
+  if (user.mustChangePassword && !((req.method === 'GET' && req.path === '/me') || req.path === '/me/password' || req.path === '/public-config'))
+    return res.status(403).json({ error: 'Debes cambiar tu contraseña temporal antes de continuar', code: 'must_change_password' });
   next();
 }
 
@@ -101,6 +121,7 @@ const publicRouter = express.Router();
 publicRouter.post('/auth/register', h(async (req, res) => {
   const ip = S.clientIp(req);
   if (!S.limiter({ key: 'reg:' + ip, max: 5, windowMs: 60 * 60 * 1000 }).ok) throw new HttpError(429, 'Demasiados registros desde esta conexión. Inténtalo más tarde.');
+  if (db.users.length && db.settings.registrationOpen === false) throw new HttpError(403, 'Los registros están cerrados por el administrador');
   const name = String(req.body?.name || '').trim().slice(0, 60);
   const email = String(req.body?.email || '').trim().toLowerCase();
   const password = String(req.body?.password || '');
@@ -116,8 +137,10 @@ publicRouter.post('/auth/register', h(async (req, res) => {
     createdAt: new Date().toISOString(), passwordChangedAt: new Date().toISOString(),
     notify: { reminders: true, weekly: true },
     lastWeeklySent: D.ymd(D.weekStart(D.today())),
+    lastActiveAt: new Date().toISOString(),
   };
   db.users.push(user);
+  ensureAdmin();
   for (const c of router.DEFAULT_CATEGORIES || []) db.categories.push({ id: store.id(), userId: user.id, ...c });
   logEvent(user, 'register', req);
   createSession(req, res, user);
@@ -151,7 +174,7 @@ publicRouter.post('/auth/login', h(async (req, res) => {
     throw new HttpError(401, 'Correo o contraseña incorrectos');
   }
   user.failedLogins = 0;
-  // Si el hash se creó con parámetros antiguos se puede renovar aquí en el futuro
+  if (user.blocked) { store.save(); throw new HttpError(403, 'Esta cuenta está desactivada. Contacta con el administrador.'); }
   if (user.totp) {
     const ticket = S.randomToken();
     tickets.set(ticket, { userId: user.id, exp: Date.now() + LOGIN_TICKET_MS, tries: 0 });
@@ -193,6 +216,50 @@ publicRouter.post('/auth/2fa', h(async (req, res) => {
   if (usedRecovery) logEvent(user, 'login_recovery', req);
   createSession(req, res, user);
   res.json({ user: publicUser(user) });
+}));
+
+// ---------- ¿Has olvidado tu contraseña? ----------
+const RESET_MS = 60 * 60 * 1000;
+const baseUrl = (req) => process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+function createResetLink(req, user) {
+  const token = S.randomToken();
+  db.passwordResets = db.passwordResets.filter((r) => r.userId !== user.id && r.exp > Date.now());
+  db.passwordResets.push({ hash: S.sha256(token), userId: user.id, exp: Date.now() + RESET_MS });
+  store.save();
+  return `${baseUrl(req)}/#/restablecer?token=${token}`;
+}
+publicRouter.post('/auth/forgot', h(async (req, res) => {
+  const ip = S.clientIp(req);
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!S.limiter({ key: 'forgot-ip:' + ip, max: 5, windowMs: 60 * 60 * 1000 }).ok || !S.limiter({ key: 'forgot:' + email, max: 3, windowMs: 60 * 60 * 1000 }).ok)
+    throw new HttpError(429, 'Demasiadas solicitudes. Inténtalo más tarde.');
+  const user = db.users.find((u) => u.email === email);
+  // Siempre la misma respuesta, exista o no el correo (no revela quién tiene cuenta)
+  if (user && !user.blocked) {
+    logEvent(user, 'password_reset_requested', req);
+    mailer.send(mailer.resetEmail(user, createResetLink(req, user))).catch((e) => console.error('[restablecer]', e.message));
+  }
+  res.json({ ok: true });
+}));
+publicRouter.post('/auth/reset', h(async (req, res) => {
+  const hash = S.sha256(String(req.body?.token || ''));
+  const r = db.passwordResets.find((x) => S.safeEqual(x.hash, hash));
+  if (!r || r.exp < Date.now()) throw new HttpError(400, 'El enlace no es válido o ha caducado. Pide uno nuevo.');
+  const user = db.users.find((u) => u.id === r.userId);
+  if (!user || user.blocked) throw new HttpError(400, 'El enlace no es válido o ha caducado. Pide uno nuevo.');
+  const pw = String(req.body?.password || '');
+  const policy = S.checkPasswordPolicy(pw);
+  if (policy) throw new HttpError(400, policy);
+  const hp = S.hashPassword(pw);
+  Object.assign(user, { salt: hp.salt, passHash: hp.hash, passwordChangedAt: new Date().toISOString(), failedLogins: 0 });
+  delete user.lockedUntil;
+  delete user.mustChangePassword;
+  db.passwordResets = db.passwordResets.filter((x) => x.userId !== user.id);
+  revokeSessions(user.id);
+  logEvent(user, 'password_reset', req);
+  store.save();
+  mailer.send(mailer.securityChangeEmail(user, 'Se ha restablecido la contraseña de tu cuenta con el enlace enviado por correo.')).catch(() => {});
+  res.json({ ok: true, twoFactor: !!user.totp });
 }));
 
 publicRouter.post('/auth/logout', (req, res) => {
@@ -244,6 +311,7 @@ router.post('/me/password', h(async (req, res) => {
   if (u.totp) requireTotp(u, req.body?.code);
   const hp = S.hashPassword(pw);
   Object.assign(u, { salt: hp.salt, passHash: hp.hash, passwordChangedAt: new Date().toISOString() });
+  delete u.mustChangePassword;
   revokeSessions(u.id, req.session.id); // cierra el resto de dispositivos
   logEvent(u, 'password_changed', req);
   store.save();
@@ -345,4 +413,4 @@ setInterval(() => {
   if (db.sessions.length !== before) store.save();
 }, 10 * 60 * 1000).unref();
 
-module.exports = { router, publicRouter, authMiddleware, migrateSessions, HttpError };
+module.exports = { router, publicRouter, authMiddleware, migrateSessions, ensureAdmin, isAdmin, publicUser, logEvent, revokeSessions, createResetLink, HttpError };

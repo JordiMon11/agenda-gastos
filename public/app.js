@@ -67,7 +67,7 @@ async function api(path, { method = 'GET', body } = {}) {
   }
   const data = (r.headers.get('content-type') || '').includes('json') ? await r.json() : null;
   if (r.status === 401 && me && !path.startsWith('/auth') && !path.startsWith('/me/') && !path.startsWith('/2fa')) { showAuth(); throw new Error('Tu sesión ha caducado'); }
-  if (!r.ok) throw new Error(data?.error || 'No se pudo conectar con el servidor');
+  if (!r.ok) { const err = new Error(data?.error || 'No se pudo conectar con el servidor'); err.code = data?.code; throw err; }
   return data;
 }
 // Descarga un archivo de la API (p. ej. el Excel) usando la sesión
@@ -171,7 +171,10 @@ const legendHtml = (items, total) =>
 
 // ---------- Modal / hoja ----------
 let modalSubmit = null;
-function openModal({ title, icon = '', html, onSubmit, okText = 'Guardar', danger = false, actions = true }) {
+let modalLocked = false;
+function openModal({ title, icon = '', html, onSubmit, okText = 'Guardar', danger = false, actions = true, locked = false }) {
+  modalLocked = locked;
+  $('#modalClose').classList.toggle('hidden', locked);
   $('#modalTitle').textContent = title;
   $('#modalIcon').innerHTML = icon ? `<span class="ichip sm ${danger ? 'red' : ''}">${ic(icon)}</span>` : '';
   $('#modalBody').innerHTML = html;
@@ -179,16 +182,17 @@ function openModal({ title, icon = '', html, onSubmit, okText = 'Guardar', dange
   $('#modalOk').textContent = okText;
   $('#modalOk').className = 'btn ' + (danger ? 'danger solid' : 'primary');
   $('#modalActions').classList.toggle('hidden', !actions);
-  $('#modalCancel').classList.remove('hidden');
+  $('#modalCancel').classList.toggle('hidden', locked);
   hydrate($('#modalBody'));
   modalSubmit = onSubmit;
   $('#modal').showModal();
   if (matchMedia('(min-width: 901px)').matches) setTimeout(() => $('#modalBody input:not([type=hidden]), #modalBody select')?.focus(), 40);
 }
-const closeModal = () => $('#modal').close();
+const closeModal = () => { modalLocked = false; $('#modal').close(); };
+$('#modal').addEventListener('cancel', (e) => { if (modalLocked) e.preventDefault(); });
 $('#modalCancel').onclick = closeModal;
 $('#modalClose').onclick = closeModal;
-$('#modal').addEventListener('click', (e) => { if (e.target === $('#modal')) closeModal(); });
+$('#modal').addEventListener('click', (e) => { if (e.target === $('#modal') && !modalLocked) closeModal(); });
 $('#modalForm').onsubmit = async (ev) => {
   ev.preventDefault();
   if (!modalSubmit) return;
@@ -1449,6 +1453,322 @@ async function renderSecurity(el) {
   };
 }
 
+// ---------- Administración ----------
+const adminState = { tab: 'resumen', q: '', filter: '' };
+const initialOf = (n) => esc((n || '?').trim()[0]?.toUpperCase() || '?');
+function userStatus(u) {
+  if (u.blocked) return `<span class="badge red">${ic('ban')}Desactivada</span>`;
+  if (u.locked) return `<span class="badge warn">${ic('lock-keyhole')}Bloqueada 15 min</span>`;
+  if (u.mustChangePassword) return `<span class="badge warn">${ic('key-round')}Contraseña temporal</span>`;
+  return `<span class="badge ok">${ic('circle-check')}Activa</span>`;
+}
+
+async function renderAdmin(el) {
+  let stats;
+  try {
+    stats = await api('/admin/stats');
+  } catch (e) {
+    if (e.code === 'admin_2fa') {
+      el.innerHTML = `<div class="card">${emptyHtml('shield-alert', 'Activa la verificación en dos pasos', 'Por seguridad, la administración solo está disponible para administradores con el 2FA activado. Así nadie puede tomar el control de la app solo con tu contraseña.', `<a class="btn primary sm" href="#/seguridad">${ic('shield-check', 'sm')}Ir a Seguridad</a>`)}</div>`;
+      return;
+    }
+    throw e;
+  }
+  const tabs = [['resumen', 'layout-dashboard', 'Resumen'], ['usuarios', 'users', 'Usuarios'], ['actividad', 'clipboard-list', 'Registro de acciones'], ['ajustes', 'settings', 'Ajustes de la app']];
+  el.innerHTML = `<div class="tabs-bar"><div class="seg" id="admTabs">${tabs.map(([k, i, t]) => `<button data-t="${k}" class="${adminState.tab === k ? 'on' : ''}">${ic(i, 'sm')}${t}</button>`).join('')}</div></div><div id="admBody"></div>`;
+  $('#admTabs').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    adminState.tab = b.dataset.t;
+    route();
+  };
+  const body = $('#admBody');
+  if (adminState.tab === 'resumen') return adminSummary(body, stats);
+  if (adminState.tab === 'usuarios') return adminUsers(body);
+  if (adminState.tab === 'actividad') return adminLog(body);
+  return adminSettings(body, stats.settings);
+}
+
+function adminSummary(el, s) {
+  const pct2fa = s.users ? Math.round((s.twoFactor / s.users) * 100) : 0;
+  const sys = [
+    [s.mailConfigured, 'Envío de correos', s.mailConfigured ? 'Funcionando' : 'Sin configurar'],
+    [s.encrypted, 'Cifrado de secretos 2FA', s.encrypted ? 'Activo (AES-256)' : 'Falta APP_SECRET'],
+    [s.settings.registrationOpen !== false, 'Registro de nuevos usuarios', s.settings.registrationOpen !== false ? 'Abierto' : 'Cerrado'],
+    [true, 'Conexión y sesiones', 'HTTPS, cookies protegidas y CSRF'],
+  ];
+  el.innerHTML = `
+  <div class="grid g4 stats">
+    <div class="card stat"><div class="top"><span class="label">Usuarios</span><span class="ichip">${ic('users')}</span></div>
+      <div><div class="value">${s.users}</div><div class="sub">${ic('user-plus', 'xs')}${s.newWeek} esta semana · ${s.newMonth} este mes</div></div></div>
+    <div class="card stat"><div class="top"><span class="label">Activos (7 días)</span><span class="ichip green">${ic('activity')}</span></div>
+      <div><div class="value">${s.active7}</div><div class="sub">${s.users ? Math.round((s.active7 / s.users) * 100) : 0}% del total</div></div></div>
+    <div class="card stat"><div class="top"><span class="label">Con 2FA</span><span class="ichip amber">${ic('shield-check')}</span></div>
+      <div><div class="value">${pct2fa}%</div><div class="sub">${s.twoFactor} de ${s.users} cuentas</div></div></div>
+    <div class="card stat"><div class="top"><span class="label">Administradores</span><span class="ichip red">${ic('crown')}</span></div>
+      <div><div class="value">${s.admins}</div><div class="sub">${s.blocked} cuenta${s.blocked === 1 ? '' : 's'} desactivada${s.blocked === 1 ? '' : 's'}</div></div></div>
+  </div>
+  <div class="grid g3">
+    <div class="card span2"><div class="card-head"><h3>${ic('user-plus', 'sm')}Nuevos registros</h3><span class="badge">Últimos 30 días</span></div><div class="chart-box sm"><canvas id="cRegs"></canvas></div></div>
+    <div class="card"><div class="card-head"><h3>${ic('server', 'sm')}Estado del sistema</h3></div>
+      ${sys.map(([ok, t, d]) => `<div class="sys-row"><span class="${ok ? 'move-in' : 'move-out'}">${ic(ok ? 'circle-check' : 'circle-alert', 'sm')}</span><span class="t">${t}</span><small class="muted">${d}</small></div>`).join('')}
+    </div>
+  </div>
+  <div class="card"><div class="card-head"><h3>${ic('database', 'sm')}Datos guardados</h3><span class="badge">${ic('lock')}Solo totales: no ves los datos de nadie</span></div>
+    <div class="mini-stats" style="margin:0">
+      <div><b>${s.totals.expenses}</b><small>gastos</small></div><div><b>${s.totals.incomes}</b><small>ingresos</small></div>
+      <div><b>${s.totals.recurring}</b><small>mensuales</small></div><div><b>${s.totals.savings}</b><small>huchas</small></div>
+    </div></div>`;
+  chart($('#cRegs'), {
+    type: 'bar',
+    data: { labels: s.registrations.map((r) => fmtDate(r.date)), datasets: [{ data: s.registrations.map((r) => r.count), backgroundColor: cssVar('--primary'), borderRadius: 5, maxBarThickness: 18 }] },
+    options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => ` ${c.parsed.y} registro${c.parsed.y === 1 ? '' : 's'}` } } }, scales: { y: { beginAtZero: true, ticks: { precision: 0, maxTicksLimit: 5 }, border: { display: false } }, x: { grid: { display: false }, ticks: { maxTicksLimit: 8 } } } },
+  });
+}
+
+async function adminUsers(el) {
+  const users = await api('/admin/users');
+  el.innerHTML = `
+  <div class="toolbar">
+    <div class="input-icon grow">${ic('search')}<input type="search" id="auQ" placeholder="Buscar por nombre o correo…" value="${esc(adminState.q)}"></div>
+    <select id="auF">
+      <option value="">Todos (${users.length})</option><option value="admin">Administradores</option><option value="2fa">Con 2FA</option>
+      <option value="no2fa">Sin 2FA</option><option value="blocked">Desactivadas</option><option value="locked">Bloqueadas</option>
+    </select>
+  </div>
+  <div class="card"><div id="auTable"></div></div>`;
+  $('#auF').value = adminState.filter;
+  const paint = () => {
+    const q = adminState.q.toLowerCase();
+    const f = adminState.filter;
+    const rows = users.filter((u) => (!q || `${u.name} ${u.email}`.toLowerCase().includes(q)) &&
+      (!f || (f === 'admin' && u.isAdmin) || (f === '2fa' && u.twoFactor) || (f === 'no2fa' && !u.twoFactor) || (f === 'blocked' && u.blocked) || (f === 'locked' && u.locked)));
+    $('#auTable').innerHTML = rows.length ? `<div class="xl-wrap"><table class="xl">
+      <thead><tr><th>Usuario</th><th>Alta</th><th>Última actividad</th><th>2FA</th><th>Estado</th><th>Rol</th><th class="num">Gastos</th><th></th></tr></thead>
+      <tbody>${rows.map((u) => `<tr data-id="${u.id}">
+        <td><div class="user-cell"><span class="avatar">${initialOf(u.name)}</span><div><b>${esc(u.name)}${u.id === me.id ? ' <span class="badge primary" style="padding:1px 7px">Tú</span>' : ''}</b><small>${esc(u.email)}</small></div></div></td>
+        <td class="date">${fmtDate(u.createdAt.slice(0, 10), { day: '2-digit', month: '2-digit', year: 'numeric' })}</td>
+        <td class="date">${ago(u.lastActiveAt)}</td>
+        <td>${u.twoFactor ? `<span class="badge ok">${ic('shield-check')}Sí</span>` : '<span class="badge">No</span>'}</td>
+        <td>${userStatus(u)}</td>
+        <td>${u.isAdmin ? `<span class="badge primary">${ic('crown')}Admin</span>` : '<span class="muted">Usuario</span>'}</td>
+        <td class="num">${u.counts.expenses}</td>
+        <td class="acts"><button class="btn sm" data-manage="${u.id}">${ic('user-cog', 'sm')}Gestionar</button></td></tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="8">${rows.length} usuario${rows.length === 1 ? '' : 's'}</td></tr></tfoot></table></div>`
+      : emptyHtml('users', 'Ningún usuario coincide', 'Prueba con otra búsqueda o filtro.');
+  };
+  $('#auTable').onclick = (e) => {
+    const row = e.target.closest('tr[data-id]');
+    if (row) manageUser(users.find((u) => u.id === row.dataset.id));
+  };
+  $('#auQ').oninput = (e) => { adminState.q = e.target.value; paint(); };
+  $('#auF').onchange = (e) => { adminState.filter = e.target.value; paint(); };
+  paint();
+}
+
+// Ejecuta una acción de administración con confirmación previa
+function adminAction({ title, text, icon = 'user-cog', danger = false, okText = 'Confirmar', extra = '', run }) {
+  openModal({
+    title, icon, danger, okText,
+    html: `<p style="margin:0 0 14px;color:var(--text-2)">${text}</p>${extra}`,
+    onSubmit: async (d) => {
+      const r = await run(d);
+      if (r !== false) route();
+    },
+  });
+}
+
+function manageUser(u) {
+  const self = u.id === me.id;
+  const act = (k, icon, t, sub, cls = '') => `<button type="button" data-a="${k}" class="${cls}">${ic(icon)}<span>${t}<small>${sub}</small></span></button>`;
+  openModal({
+    title: 'Gestionar usuario',
+    icon: 'user-cog',
+    actions: false,
+    html: `
+      <div class="user-head"><span class="avatar">${initialOf(u.name)}</span><div><b>${esc(u.name)}</b><span class="muted">${esc(u.email)}</span><div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">${userStatus(u)}${u.isAdmin ? `<span class="badge primary">${ic('crown')}Admin</span>` : ''}${u.twoFactor ? `<span class="badge ok">${ic('shield-check')}2FA</span>` : ''}</div></div></div>
+      <div class="mini-stats">
+        <div><b>${u.counts.expenses}</b><small>gastos</small></div><div><b>${u.counts.incomes}</b><small>ingresos</small></div>
+        <div><b>${u.counts.savings}</b><small>huchas</small></div><div><b>${u.sessions}</b><small>sesiones</small></div>
+      </div>
+      <p class="muted" style="font-size:13px;margin:-4px 0 14px">Alta: ${new Date(u.createdAt).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })} · Última actividad ${ago(u.lastActiveAt)}</p>
+      <div class="action-list">
+        ${act('edit', 'user-pen', 'Editar nombre o correo', 'Cambia los datos de la cuenta')}
+        ${act('reset', 'mail-check', 'Enviar enlace para restablecer la contraseña', 'Le llega un correo para crear una contraseña nueva')}
+        ${self ? '' : act('temp', 'key-round', 'Generar contraseña temporal', 'Tendrá que cambiarla al entrar. Útil si no recibe correos')}
+        ${u.twoFactor && !self ? act('no2fa', 'shield-alert', 'Quitar la verificación en dos pasos', 'Si ha perdido el móvil y los códigos de recuperación') : ''}
+        ${u.locked ? act('unlock', 'lock-open', 'Desbloquear acceso', 'Quita el bloqueo por intentos fallidos') : ''}
+        ${!self && u.sessions ? act('logout', 'log-out', u.sessions === 1 ? 'Cerrar su sesión abierta' : `Cerrar sus ${u.sessions} sesiones`, 'Tendrá que volver a iniciar sesión en todos sus dispositivos') : ''}
+        ${self ? '' : u.isAdmin ? (u.envAdmin ? '' : act('demote', 'user-x', 'Quitar permisos de administrador', 'Pasará a ser un usuario normal')) : act('promote', 'crown', 'Hacer administrador', 'Podrá gestionar usuarios y ajustes de la app')}
+        ${self ? '' : u.blocked ? act('unblock', 'user-check', 'Reactivar cuenta', 'Podrá volver a entrar') : act('block', 'ban', 'Desactivar cuenta', 'No podrá entrar. Sus datos se conservan', 'danger')}
+        ${self ? '' : act('delete', 'trash-2', 'Eliminar cuenta y todos sus datos', 'No se puede deshacer', 'danger')}
+      </div>`,
+  });
+  $('.action-list').onclick = (e) => {
+    const b = e.target.closest('button[data-a]');
+    if (!b) return;
+    const a = b.dataset.a;
+    const who = `<b>${esc(u.name)}</b> (${esc(u.email)})`;
+    const post = (p, body) => api(`/admin/users/${u.id}/${p}`, { method: 'POST', body });
+    closeModal();
+    setTimeout(() => {
+      if (a === 'edit') openModal({
+        title: 'Editar usuario', icon: 'user-pen',
+        html: `<label class="field">Nombre<input name="name" required maxlength="60" value="${esc(u.name)}"></label>
+          <label class="field">Correo<input name="email" type="email" required value="${esc(u.email)}"></label>
+          <p class="muted" style="font-size:13px;margin:0">Si cambias el correo, avisaremos a la dirección anterior.</p>`,
+        onSubmit: async (d) => { await api(`/admin/users/${u.id}`, { method: 'PATCH', body: d }); toast('Usuario actualizado'); route(); },
+      });
+      if (a === 'reset') adminAction({ title: 'Restablecer contraseña', icon: 'mail-check', okText: 'Enviar correo', text: `Enviaremos a ${who} un enlace para crear una contraseña nueva. Caduca en 1 hora.`,
+        run: async () => { const r = await post('reset-link'); toast(r.simulated ? 'El correo no está configurado: no se ha podido enviar' : 'Correo enviado', !!r.simulated); } });
+      if (a === 'temp') adminAction({ title: 'Contraseña temporal', icon: 'key-round', okText: 'Generar', text: `Se cerrarán las sesiones de ${who} y tendrá que entrar con la contraseña temporal y cambiarla. Comunícasela por un medio seguro.`,
+        run: async () => {
+          const r = await post('temp-password');
+          setTimeout(() => {
+            openModal({ title: 'Contraseña temporal', icon: 'key-round', okText: 'Hecho', html: `
+              <p style="margin:0 0 12px;color:var(--text-2)">Contraseña temporal para ${who}. <b>Solo se muestra ahora.</b></p>
+              <div class="codes-grid" style="grid-template-columns:1fr"><code style="font-size:19px">${esc(r.password)}</code></div>
+              <button type="button" class="btn sm" id="cpTemp">${ic('copy', 'sm')}Copiar</button>`, onSubmit: async () => route() });
+            $('#modalCancel').classList.add('hidden');
+            $('#cpTemp').onclick = () => copyText(r.password);
+          }, 80);
+          return false;
+        } });
+      if (a === 'no2fa') adminAction({ title: 'Quitar verificación en dos pasos', icon: 'shield-alert', danger: true, okText: 'Quitar 2FA', text: `${who} podrá entrar solo con su contraseña y se cerrarán sus sesiones. Hazlo solo si has comprobado su identidad.`,
+        run: async () => { await post('disable-2fa'); toast('2FA desactivado'); } });
+      if (a === 'unlock') adminAction({ title: 'Desbloquear acceso', icon: 'lock-open', okText: 'Desbloquear', text: `Se quitará el bloqueo temporal de ${who}.`, run: async () => { await post('unlock'); toast('Acceso desbloqueado'); } });
+      if (a === 'logout') adminAction({ title: 'Cerrar sesiones', icon: 'log-out', okText: 'Cerrar sesiones', text: `Se cerrarán todas las sesiones de ${who}.`, run: async () => { await post('logout-all'); toast('Sesiones cerradas'); } });
+      if (a === 'promote') adminAction({ title: 'Hacer administrador', icon: 'crown', okText: 'Hacer administrador', text: `${who} podrá ver la lista de usuarios, cambiar contraseñas, desactivar cuentas y cambiar los ajustes de la app. Necesitará el 2FA para entrar en la administración.`,
+        run: async () => { await post('role', { admin: true }); toast('Ahora es administrador'); } });
+      if (a === 'demote') adminAction({ title: 'Quitar administrador', icon: 'user-x', okText: 'Quitar permisos', text: `${who} pasará a ser un usuario normal.`, run: async () => { await post('role', { admin: false }); toast('Permisos retirados'); } });
+      if (a === 'block') adminAction({ title: 'Desactivar cuenta', icon: 'ban', danger: true, okText: 'Desactivar', text: `${who} no podrá entrar y se cerrarán sus sesiones. Sus datos se conservan y puedes reactivarla cuando quieras.`,
+        run: async () => { await post('block', { blocked: true }); toast('Cuenta desactivada'); } });
+      if (a === 'unblock') adminAction({ title: 'Reactivar cuenta', icon: 'user-check', okText: 'Reactivar', text: `${who} podrá volver a entrar.`, run: async () => { await post('block', { blocked: false }); toast('Cuenta reactivada'); } });
+      if (a === 'delete') adminAction({ title: 'Eliminar cuenta', icon: 'trash-2', danger: true, okText: 'Eliminar para siempre',
+        text: `Se borrarán la cuenta de ${who} y <b>todos sus datos</b> (${u.counts.expenses} gastos, ${u.counts.incomes} ingresos, ${u.counts.savings} huchas). <b>No se puede deshacer.</b>`,
+        extra: `<label class="field">Escribe <b>${esc(u.email)}</b> para confirmar<input name="confirmEmail" autocomplete="off" required></label>`,
+        run: async (d) => { await api(`/admin/users/${u.id}`, { method: 'DELETE', body: { confirmEmail: d.confirmEmail } }); toast('Cuenta eliminada'); } });
+    }, 60);
+  };
+}
+
+async function adminLog(el) {
+  const log = await api('/admin/log');
+  el.innerHTML = `<div class="card"><div class="card-head"><h3>${ic('clipboard-list', 'sm')}Registro de acciones</h3><span class="badge">Últimas ${log.length}</span></div>
+    <p class="set-desc">Todo lo que hacen los administradores queda anotado aquí y no se puede borrar desde la app.</p>
+    <div class="list">${log.map((e) => `<div class="li"><span class="ev-ic">${ic(/eliminad|desactiv|Quitar|retirad/i.test(e.action) ? 'shield-alert' : /Contraseña|restablecer/i.test(e.action) ? 'key-round' : 'user-cog', 'sm')}</span>
+      <div class="main"><b>${esc(e.action)}${e.targetEmail ? ` · ${esc(e.targetEmail)}` : ''}</b>
+      <small>Por ${esc(e.adminEmail)}<span class="dot-sep"></span>${ago(e.at)}${e.detail ? `<span class="dot-sep"></span>${esc(e.detail)}` : ''}</small></div></div>`).join('') || emptyHtml('clipboard-list', 'Aún no hay acciones', '')}</div></div>`;
+}
+
+function adminSettings(el, st) {
+  let type = st.bannerType || 'info';
+  el.innerHTML = `
+  <div class="grid g2">
+    <div class="card">
+      <div class="card-head"><h3>${ic('user-plus', 'sm')}Registro de usuarios</h3></div>
+      <label class="switch-row"><span class="ichip sm green">${ic('user-plus', 'sm')}</span><span class="txt"><b>Permitir nuevos registros</b><small>Si lo desactivas, nadie más podrá crear una cuenta</small></span>
+        <span class="switch"><input type="checkbox" id="stReg" ${st.registrationOpen !== false ? 'checked' : ''}><span></span></span></label>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>${ic('megaphone', 'sm')}Aviso para todos los usuarios</h3></div>
+      <p class="set-desc">Aparece arriba en la app y en la pantalla de acceso. Déjalo vacío para quitarlo.</p>
+      <label class="field">Mensaje<textarea id="stBanner" maxlength="300" placeholder="Ej: El domingo por la noche haremos mantenimiento.">${esc(st.banner || '')}</textarea></label>
+      <div class="seg" id="stType" style="margin-bottom:14px"><button data-t="info">${ic('info', 'sm')}Información</button><button data-t="warn">${ic('triangle-alert', 'sm')}Importante</button><button data-t="ok">${ic('circle-check', 'sm')}Buenas noticias</button></div>
+      <div id="stPrev"></div>
+      <button class="btn primary" id="stSave">${ic('check', 'sm')}Publicar aviso</button>
+    </div>
+  </div>`;
+  const prev = () => {
+    $$('#stType button').forEach((b) => b.classList.toggle('on', b.dataset.t === type));
+    const txt = $('#stBanner').value.trim();
+    $('#stPrev').innerHTML = txt ? `<div class="mini-label">Vista previa</div>${bannerHtml(txt, type)}<div style="height:14px"></div>` : '';
+  };
+  $('#stType').onclick = (e) => { const b = e.target.closest('button'); if (b) { type = b.dataset.t; prev(); } };
+  $('#stBanner').oninput = prev;
+  prev();
+  $('#stReg').onchange = async (e) => {
+    try { await api('/admin/settings', { method: 'PUT', body: { registrationOpen: e.target.checked } }); toast(e.target.checked ? 'Registros abiertos' : 'Registros cerrados'); }
+    catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; }
+  };
+  $('#stSave').onclick = async () => {
+    try {
+      const s = await api('/admin/settings', { method: 'PUT', body: { banner: $('#stBanner').value, bannerType: type } });
+      publicCfg.banner = s.banner;
+      publicCfg.bannerType = s.bannerType;
+      renderBanners();
+      toast(s.banner ? 'Aviso publicado' : 'Aviso retirado');
+    } catch (err) { toast(err.message, true); }
+  };
+}
+
+// ---------- Aviso global ----------
+const bannerHtml = (txt, type) => `<div class="notice ${type === 'warn' ? 'warn' : type === 'ok' ? 'ok' : ''}">${ic(type === 'warn' ? 'triangle-alert' : type === 'ok' ? 'circle-check' : 'megaphone', 'sm')}<span>${esc(txt)}</span></div>`;
+function renderBanners() {
+  const h = publicCfg.banner ? bannerHtml(publicCfg.banner, publicCfg.bannerType) : '';
+  $('#appBanner').innerHTML = h;
+  $('#authBanner').innerHTML = h;
+}
+
+// ---------- ¿Has olvidado tu contraseña? ----------
+function forgotForm() {
+  openModal({
+    title: 'Recuperar contraseña',
+    icon: 'key-round',
+    okText: 'Enviar enlace',
+    html: `<p class="set-desc">Escribe el correo de tu cuenta y te enviaremos un enlace para crear una contraseña nueva.</p>
+      <label class="field">Correo electrónico<div class="input-icon">${ic('mail')}<input name="email" type="email" required autocomplete="email" value="${esc($('#authForm').email.value)}"></div></label>`,
+    onSubmit: async (d) => {
+      await api('/auth/forgot', { method: 'POST', body: d });
+      setTimeout(() => openModal({ title: 'Revisa tu correo', icon: 'mail-check', okText: 'Entendido', html: `<p style="margin:0;color:var(--text-2)">Si existe una cuenta con <b>${esc(d.email)}</b>, recibirás un correo con un enlace. Caduca en 1 hora. Mira también en la carpeta de spam.</p>`, onSubmit: async () => {} }), 80);
+    },
+  });
+}
+function resetForm(token) {
+  openModal({
+    title: 'Crea tu contraseña nueva',
+    icon: 'key-round',
+    okText: 'Guardar contraseña',
+    html: `<label class="field">Nueva contraseña<div class="input-icon pw-wrap">${ic('lock')}<input name="password" type="password" required autocomplete="new-password" placeholder="8+ caracteres, letras y números"><button type="button" class="pw-eye" tabindex="-1">${ic('eye')}</button></div></label>
+      <div class="pw-meter" id="rsMeter"></div>
+      <label class="field">Repite la contraseña<div class="input-icon">${ic('lock')}<input name="confirm" type="password" required autocomplete="new-password"></div></label>`,
+    onSubmit: async (d) => {
+      if (d.password !== d.confirm) throw new Error('Las contraseñas no coinciden');
+      const r = await api('/auth/reset', { method: 'POST', body: { token, password: d.password } });
+      history.replaceState(null, '', location.pathname + '#/');
+      if (me) showAuth();
+      toast(r.twoFactor ? 'Contraseña cambiada. Entra con ella y con tu código 2FA.' : 'Contraseña cambiada. Ya puedes entrar.');
+    },
+  });
+  const inp = $('#modalBody input[name=password]');
+  inp.oninput = () => paintMeter($('#rsMeter'), inp.value);
+}
+// Cambio obligatorio tras una contraseña temporal
+function forcePasswordChange() {
+  openModal({
+    title: 'Cambia tu contraseña temporal',
+    icon: 'key-round',
+    okText: 'Guardar y continuar',
+    locked: true,
+    html: `<div class="notice warn" style="margin-bottom:16px">${ic('info', 'sm')}<span>Un administrador te ha dado una contraseña temporal. Elige una contraseña nueva para continuar.</span></div>
+      <label class="field">Contraseña temporal<div class="input-icon">${ic('lock')}<input name="currentPassword" type="password" required autocomplete="current-password"></div></label>
+      <label class="field">Nueva contraseña<div class="input-icon pw-wrap">${ic('lock')}<input name="newPassword" type="password" required autocomplete="new-password" placeholder="8+ caracteres, letras y números"><button type="button" class="pw-eye" tabindex="-1">${ic('eye')}</button></div></label>
+      <div class="pw-meter" id="fpMeter"></div>
+      <label class="field">Repite la nueva contraseña<div class="input-icon">${ic('lock')}<input name="confirm" type="password" required autocomplete="new-password"></div></label>
+      ${me.twoFactor ? '<label class="field">Código de tu app<input name="code" inputmode="numeric" maxlength="6" required placeholder="000000"></label>' : ''}
+      <button type="button" class="btn ghost sm" id="fpLogout">${ic('log-out', 'sm')}Cerrar sesión</button>`,
+    onSubmit: async (d) => {
+      if (d.newPassword !== d.confirm) throw new Error('Las contraseñas no coinciden');
+      me = await api('/me/password', { method: 'POST', body: d });
+      toast('Contraseña cambiada');
+      setTimeout(() => { $('#view').innerHTML = ''; route(); }, 50);
+    },
+  });
+  const inp = $('#modalBody input[name=newPassword]');
+  inp.oninput = () => paintMeter($('#fpMeter'), inp.value);
+  $('#fpLogout').onclick = () => { modalLocked = false; closeModal(); logout(); };
+}
+
 // ---------- Menú «Más» (móvil) ----------
 function openMore() {
   const items = [
@@ -1458,6 +1778,7 @@ function openMore() {
     ['semanal', 'calendar-range', 'Resumen semanal'],
     ['seguridad', 'shield-check', 'Seguridad'],
     ['ajustes', 'settings', 'Ajustes'],
+    ...(me?.isAdmin ? [['admin', 'user-cog', 'Administración']] : []),
     ...(IS_ELECTRON ? [] : [['descargar', 'download', 'Descargar app']]),
   ];
   openModal({
@@ -1483,6 +1804,7 @@ const VIEWS = {
   seguridad: ['Seguridad', () => 'Verificación en dos pasos, contraseña y sesiones', renderSecurity],
   ajustes: ['Ajustes', () => 'Perfil, avisos, apariencia y categorías', renderSettings],
   descargar: ['Descargar app', () => 'Úsala en el móvil y en el ordenador', renderDownload],
+  admin: ['Administración', () => 'Usuarios, contraseñas, permisos y ajustes de la app', renderAdmin],
 };
 let currentAdd = addExpense;
 async function route() {
@@ -1499,7 +1821,8 @@ async function route() {
   $('#viewTitle').textContent = title;
   $('#viewSubtitle').innerHTML = subtitle();
   document.title = `${title} · Agenda de Gastos`;
-  const inMore = ['calendario', 'mensuales', 'ahorros', 'semanal', 'seguridad', 'ajustes', 'descargar'].includes(v);
+  const inMore = ['calendario', 'mensuales', 'ahorros', 'semanal', 'seguridad', 'ajustes', 'descargar', 'admin'].includes(v);
+  if (v === 'admin' && !me.isAdmin) { location.hash = '#/dashboard'; return; }
   $$('#nav a, #tabbar [data-view]').forEach((a) => a.classList.toggle('active', a.dataset.view === v || (a.dataset.view === 'more' && inMore)));
   charts.forEach((c) => c.destroy());
   charts = [];
@@ -1523,6 +1846,7 @@ function setUser() {
   $('#avatar').textContent = initial;
   $('#avatarMobile').textContent = initial;
   $('#secWarn').classList.toggle('hidden', !!me.twoFactor);
+  $('#navAdmin').classList.toggle('hidden', !me.isAdmin);
 }
 function showAuth() {
   me = null;
@@ -1536,11 +1860,13 @@ async function logout() {
   showAuth();
 }
 async function enter() {
-  [me, cats] = await Promise.all([api('/me'), api('/categories')]);
+  me = await api('/me');
   setUser();
   $('#auth').classList.add('hidden');
   $('#app').classList.remove('hidden');
   $('#view').innerHTML = '';
+  if (me.mustChangePassword) { forcePasswordChange(); return; }
+  cats = await api('/categories');
   route();
   api('/recurring').then((recs) => { updateDueBadge(recs); notifyUpcoming(recs); }).catch(() => {});
 }
@@ -1549,6 +1875,8 @@ let registering = false;
 function setAuthMode(reg) {
   registering = reg;
   $$('.reg-only').forEach((e) => e.classList.toggle('hidden', !reg));
+  $$('.login-only').forEach((e) => e.classList.toggle('hidden', reg));
+  $('.auth-switch').classList.toggle('hidden', !reg && publicCfg.registrationOpen === false);
   $('#authTitle').textContent = reg ? 'Crea tu cuenta' : 'Bienvenido de nuevo';
   $('#authSubmit').textContent = reg ? 'Crear cuenta gratis' : 'Entrar';
   $('#authSubtitle').textContent = reg ? 'Tu cuenta quedará vinculada a tu correo para recibir los avisos.' : 'Inicia sesión para ver tus gastos';
@@ -1560,6 +1888,7 @@ function setAuthMode(reg) {
   $('#authError').textContent = '';
 }
 $('#authToggle').onclick = (e) => { e.preventDefault(); setAuthMode(!registering); };
+$('#forgotLink').onclick = (e) => { e.preventDefault(); forgotForm(); };
 $('#authForm').password.addEventListener('input', (e) => { if (registering) paintMeter($('#authMeter'), e.target.value); });
 
 let loginTicket = null;
@@ -1644,6 +1973,8 @@ hydrate();
 applyTheme(themePref());
 setAuthMode(false);
 if (IS_ELECTRON) $$('.nav-download').forEach((e) => e.classList.add('hidden'));
-fetch('/api/public-config').then((r) => r.json()).then((c) => { publicCfg = c; renderAuthInstall(); }).catch(() => {});
+fetch('/api/public-config').then((r) => r.json()).then((c) => { publicCfg = c; renderAuthInstall(); renderBanners(); setAuthMode(registering); }).catch(() => {});
 if ('serviceWorker' in navigator && !IS_ELECTRON) navigator.serviceWorker.register('/sw.js').catch(() => {});
-enter().catch(() => showAuth());
+const resetToken = /^#\/restablecer\?token=([\w-]+)/.exec(location.hash)?.[1];
+if (resetToken) { showAuth(); resetForm(resetToken); }
+else enter().catch(() => showAuth());
