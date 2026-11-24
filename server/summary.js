@@ -6,7 +6,7 @@ const sum = (list) => round(list.reduce((a, e) => a + e.amount, 0));
 
 function catInfo(userId, catId) {
   const c = db.categories.find((c) => c.id === catId && c.userId === userId);
-  return c || { id: null, name: 'Sin categoría', color: '#94a3b8', icon: '📦' };
+  return c || { id: null, name: 'Sin categoría', color: '#94a3b8', icon: 'package' };
 }
 
 // Resumen de la semana (lunes-domingo) que contiene dateStr

@@ -1,4 +1,4 @@
-// Envío de correos. Si no hay SMTP configurado, se guardan en data/outbox como .html
+// Envío de correos: Brevo (API HTTPS), SMTP, o si no hay nada configurado se guardan en data/outbox como .html
 const fs = require('fs');
 const path = require('path');
 const nodemailer = require('nodemailer');
@@ -6,6 +6,7 @@ const { DATA_DIR } = require('./db');
 const D = require('./dates');
 
 const OUTBOX = path.join(DATA_DIR, 'outbox');
+const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || '';
 const eur = (n) => new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(n || 0);
 const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -15,7 +16,6 @@ const useSmtp = () => !!(process.env.SMTP_HOST && process.env.SMTP_USER && proce
 const configured = () => useBrevo() || useSmtp();
 let transporter = null;
 
-// Brevo (gratis, 300 correos/día) envía por HTTPS, así funciona en hostings que bloquean SMTP
 async function sendBrevo({ to, subject, html }) {
   const r = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
@@ -29,6 +29,7 @@ async function sendBrevo({ to, subject, html }) {
   });
   if (!r.ok) throw new Error(`Brevo ${r.status}: ${await r.text()}`);
 }
+
 function getTransporter() {
   if (!transporter) {
     transporter = nodemailer.createTransport({
@@ -55,47 +56,77 @@ async function send({ to, subject, html }) {
   return { sent: true };
 }
 
-function layout(title, body) {
-  return `<!doctype html><html><body style="margin:0;background:#f1f5f9;font-family:Segoe UI,Arial,sans-serif;color:#0f172a">
-  <div style="max-width:560px;margin:24px auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px #0001">
-    <div style="background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;padding:20px 24px">
-      <div style="font-size:13px;opacity:.85">💸 Agenda de Gastos</div>
-      <div style="font-size:21px;font-weight:700;margin-top:4px">${title}</div>
-    </div>
-    <div style="padding:22px 24px;font-size:15px;line-height:1.5">${body}</div>
-    <div style="padding:12px 24px;background:#f8fafc;color:#64748b;font-size:12px">Puedes cambiar estos avisos en Ajustes dentro de la aplicación.</div>
-  </div></body></html>`;
+// ---------- Plantillas ----------
+const FONT = "-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+const dot = (color) =>
+  `<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${esc(color)};margin-right:8px;vertical-align:middle"></span>`;
+const button = (label) =>
+  APP_URL
+    ? `<a href="${esc(APP_URL)}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:10px;margin-top:8px">${label}</a>`
+    : '';
+
+function layout(preheader, title, body) {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
+  <body style="margin:0;background:#f3f4f8;font-family:${FONT};color:#111827">
+  <span style="display:none;max-height:0;overflow:hidden">${esc(preheader)}</span>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f8;padding:28px 12px"><tr><td align="center">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px">
+      <tr><td style="padding:0 4px 16px">
+        <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+          <td style="width:34px;height:34px;border-radius:10px;background:#4f46e5;color:#fff;font-weight:800;font-size:17px;text-align:center">€</td>
+          <td style="padding-left:10px;font-weight:700;font-size:16px;color:#111827">Agenda de Gastos</td>
+        </tr></table>
+      </td></tr>
+      <tr><td style="background:#ffffff;border-radius:18px;border:1px solid #e7e8ef;padding:30px 28px">
+        <div style="font-size:22px;font-weight:800;letter-spacing:-.3px;margin-bottom:14px">${title}</div>
+        <div style="font-size:15px;line-height:1.6;color:#374151">${body}</div>
+      </td></tr>
+      <tr><td style="padding:16px 8px;color:#9ca3af;font-size:12px;text-align:center">
+        Recibes este correo porque tienes activados los avisos en Agenda de Gastos. Puedes cambiarlo en Ajustes.
+      </td></tr>
+    </table>
+  </td></tr></table></body></html>`;
 }
+
+const row = (label, value) =>
+  `<tr><td style="padding:11px 0;color:#6b7280;border-bottom:1px solid #f0f1f5">${label}</td>
+   <td style="padding:11px 0;text-align:right;font-weight:600;color:#111827;border-bottom:1px solid #f0f1f5">${value}</td></tr>`;
 
 function welcomeEmail(user) {
   return {
     to: user.email,
     subject: 'Tu cuenta de Agenda de Gastos está lista',
     html: layout(
-      `¡Hola, ${esc(user.name)}!`,
-      `<p>Tu cuenta ha quedado vinculada a este correo.</p>
-       <p>Aquí recibirás:</p>
-       <ul><li>🔔 Avisos antes de que llegue cada <b>gasto mensual</b>.</li><li>📊 Un <b>resumen semanal</b> cada lunes.</li></ul>`
+      'Tu cuenta ya está vinculada a este correo',
+      `Hola, ${esc(user.name)}`,
+      `<p style="margin:0 0 14px">Tu cuenta ha quedado vinculada a este correo. A partir de ahora recibirás aquí:</p>
+       <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 18px">
+        <tr><td style="padding:6px 0">${dot('#4f46e5')}<b>Avisos</b> antes de que llegue cada gasto mensual.</td></tr>
+        <tr><td style="padding:6px 0">${dot('#16a34a')}<b>Un resumen semanal</b> cada lunes con lo que has gastado.</td></tr>
+       </table>
+       ${button('Abrir mi agenda')}`
     ),
   };
 }
 
 function reminderEmail(user, rec, due, daysLeft, cat) {
-  const when = daysLeft === 0 ? '<b>hoy</b>' : daysLeft === 1 ? '<b>mañana</b>' : `en <b>${daysLeft} días</b>`;
+  const whenShort = daysLeft === 0 ? 'hoy' : daysLeft === 1 ? 'mañana' : `en ${daysLeft} días`;
   return {
     to: user.email,
-    subject: `🔔 ${rec.name}: ${eur(rec.amount)} ${daysLeft === 0 ? 'hoy' : daysLeft === 1 ? 'mañana' : `en ${daysLeft} días`}`,
+    subject: `Recordatorio: ${rec.name} (${eur(rec.amount)}) ${whenShort}`,
     html: layout(
-      `Se acerca un gasto mensual`,
-      `<p>Hola ${esc(user.name)}, te recordamos que ${when} llega este cargo:</p>
-       <table style="width:100%;border-collapse:collapse;margin:14px 0">
-        <tr><td style="padding:8px 0;color:#64748b">Concepto</td><td style="text-align:right;font-weight:600">${esc(rec.name)}</td></tr>
-        <tr><td style="padding:8px 0;color:#64748b">Importe</td><td style="text-align:right;font-weight:700;font-size:20px;color:#4f46e5">${eur(rec.amount)}</td></tr>
-        <tr><td style="padding:8px 0;color:#64748b">Fecha</td><td style="text-align:right">${esc(D.fmtLong(due))}</td></tr>
-        <tr><td style="padding:8px 0;color:#64748b">Categoría</td><td style="text-align:right">${esc(cat.icon)} ${esc(cat.name)}</td></tr>
-        ${rec.place ? `<tr><td style="padding:8px 0;color:#64748b">Dónde</td><td style="text-align:right">${esc(rec.place)}</td></tr>` : ''}
+      `${rec.name} se cobra ${whenShort}`,
+      `${esc(rec.name)} se cobra ${whenShort}`,
+      `<p style="margin:0 0 6px">Hola ${esc(user.name)}, te recordamos que se acerca este gasto mensual:</p>
+       <div style="font-size:34px;font-weight:800;color:#4f46e5;letter-spacing:-.5px;margin:12px 0 6px">${eur(rec.amount)}</div>
+       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 18px;font-size:14px">
+        ${row('Concepto', esc(rec.name))}
+        ${row('Fecha de cobro', esc(D.fmtLong(due)))}
+        ${row('Categoría', dot(cat.color) + esc(cat.name))}
+        ${rec.place ? row('Dónde', esc(rec.place)) : ''}
        </table>
-       <p style="color:#64748b;font-size:13px">Asegúrate de tener saldo suficiente 😉</p>`
+       <p style="margin:0 0 4px;color:#6b7280;font-size:13px">Asegúrate de tener saldo suficiente en la cuenta.</p>
+       ${button('Ver mis gastos mensuales')}`
     ),
   };
 }
@@ -103,34 +134,39 @@ function reminderEmail(user, rec, due, daysLeft, cat) {
 function weeklyEmail(user, s) {
   const diff = s.prevTotal ? ((s.total - s.prevTotal) / s.prevTotal) * 100 : null;
   const diffTxt =
-    diff === null ? '' : `<span style="color:${diff > 0 ? '#dc2626' : '#16a34a'}">${diff > 0 ? '▲' : '▼'} ${Math.abs(diff).toFixed(0)}% respecto a la semana anterior</span>`;
+    diff === null
+      ? ''
+      : `<span style="display:inline-block;padding:4px 10px;border-radius:99px;font-size:13px;font-weight:600;background:${diff > 0 ? '#fef2f2' : '#f0fdf4'};color:${diff > 0 ? '#dc2626' : '#16a34a'}">${diff > 0 ? '+' : '−'}${Math.abs(diff).toFixed(0)}% que la semana anterior</span>`;
   const max = Math.max(1, ...s.byDay.map((d) => d.total));
   const days = s.byDay
     .map(
-      (d) => `<tr><td style="padding:3px 0;width:90px;color:#64748b">${d.name}</td>
-      <td><div style="background:#6366f1;height:12px;border-radius:6px;width:${Math.round((d.total / max) * 100)}%"></div></td>
-      <td style="text-align:right;width:90px">${eur(d.total)}</td></tr>`
+      (d) => `<tr><td style="padding:5px 0;width:84px;color:#6b7280;font-size:13px">${d.name}</td>
+      <td style="padding:5px 0"><div style="background:#eef0ff;border-radius:6px"><div style="background:#4f46e5;height:10px;border-radius:6px;width:${Math.max(d.total ? 3 : 0, Math.round((d.total / max) * 100))}%"></div></div></td>
+      <td style="padding:5px 0 5px 10px;text-align:right;width:86px;font-size:13px;font-weight:600">${eur(d.total)}</td></tr>`
     )
     .join('');
   const cats = s.byCategory
-    .map(
-      (c) => `<tr><td style="padding:6px 0">${esc(c.icon)} ${esc(c.name)} <span style="color:#94a3b8">(${c.count})</span></td>
-      <td style="text-align:right;font-weight:600">${eur(c.total)}</td></tr>`
-    )
+    .map((c) => row(`${dot(c.color)}${esc(c.name)} <span style="color:#9ca3af">· ${c.count}</span>`, eur(c.total)))
     .join('');
   return {
     to: user.email,
-    subject: `📊 Tu resumen semanal: ${eur(s.total)} (${s.from} a ${s.to})`,
+    subject: `Tu resumen semanal: ${eur(s.total)} gastados`,
     html: layout(
-      'Resumen semanal',
-      `<p>Hola ${esc(user.name)}, esto es lo que gastaste del <b>${s.from}</b> al <b>${s.to}</b>:</p>
-       <div style="font-size:32px;font-weight:800;color:#4f46e5">${eur(s.total)}</div>
-       <div style="font-size:13px;margin-bottom:16px">${diffTxt}</div>
-       <p style="margin:0 0 6px"><b>${s.count}</b> gastos · media de <b>${eur(s.avgPerDay)}</b>/día</p>
-       ${s.top ? `<p style="margin:0 0 16px">Mayor gasto: <b>${esc(s.top.name)}</b> (${eur(s.top.amount)})</p>` : ''}
-       <h3 style="margin:18px 0 6px;font-size:15px">Por día</h3><table style="width:100%">${days}</table>
-       <h3 style="margin:18px 0 6px;font-size:15px">Por categoría</h3>
-       <table style="width:100%">${cats || '<tr><td style="color:#94a3b8">Sin gastos esta semana 🎉</td></tr>'}</table>`
+      `Del ${s.from} al ${s.to} gastaste ${eur(s.total)}`,
+      'Tu resumen semanal',
+      `<p style="margin:0 0 4px;color:#6b7280">Del <b>${esc(s.from)}</b> al <b>${esc(s.to)}</b></p>
+       <div style="font-size:36px;font-weight:800;color:#111827;letter-spacing:-.6px;margin:6px 0 8px">${eur(s.total)}</div>
+       ${diffTxt}
+       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0 6px;font-size:14px">
+        ${row('Número de gastos', s.count)}
+        ${row('Media diaria', eur(s.avgPerDay))}
+        ${s.top ? row('Mayor gasto', `${esc(s.top.name)} · ${eur(s.top.amount)}`) : ''}
+       </table>
+       <div style="font-weight:700;margin:22px 0 8px;color:#111827">Por día</div>
+       <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${days}</table>
+       <div style="font-weight:700;margin:22px 0 4px;color:#111827">Por categoría</div>
+       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px">${cats || '<tr><td style="padding:10px 0;color:#9ca3af">Sin gastos esta semana.</td></tr>'}</table>
+       <div style="margin-top:20px">${button('Ver el resumen completo')}</div>`
     ),
   };
 }
@@ -138,8 +174,8 @@ function weeklyEmail(user, s) {
 function testEmail(user) {
   return {
     to: user.email,
-    subject: '✅ Prueba de correo - Agenda de Gastos',
-    html: layout('¡El correo funciona!', `<p>Hola ${esc(user.name)}, si lees esto los avisos por correo están bien configurados.</p>`),
+    subject: 'Prueba de correo de Agenda de Gastos',
+    html: layout('Los avisos por correo funcionan', 'Los correos funcionan', `<p style="margin:0">Hola ${esc(user.name)}, si lees esto los avisos por correo están bien configurados.</p>`),
   };
 }
 

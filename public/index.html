@@ -2,70 +2,134 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Agenda de Gastos</title>
   <meta name="theme-color" content="#4f46e5" />
   <meta name="description" content="Apunta tus gastos, mira en qué y dónde gastas y recibe avisos de tus gastos mensuales." />
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" type="image/png" href="/icons/favicon-32.png" />
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <link rel="preload" href="/fonts/inter-latin-standard-normal.woff2" as="font" type="font/woff2" crossorigin />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Gastos" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <link rel="stylesheet" href="styles.css" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <script>
+    // Aplica el tema guardado antes de pintar (evita parpadeo)
+    try { const t = localStorage.getItem('agenda_tema'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch {}
+  </script>
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="/icons.js"></script>
   <script src="/vendor/chart.umd.js"></script>
 </head>
 <body>
-  <!-- Acceso -->
+  <!-- ============ Acceso ============ -->
   <div id="auth" class="auth hidden">
-    <form id="authForm" class="auth-card">
-      <div class="brand big">💸 Agenda de Gastos</div>
-      <p class="muted" id="authSubtitle">Inicia sesión para ver tus gastos</p>
-      <label class="reg-only">Nombre<input name="name" autocomplete="name" /></label>
-      <label>Correo electrónico<input name="email" type="email" required autocomplete="email" /></label>
-      <label>Contraseña<input name="password" type="password" required minlength="6" autocomplete="current-password" /></label>
-      <div class="error" id="authError"></div>
-      <button class="btn primary full" id="authSubmit">Entrar</button>
-      <p class="muted center"><a href="#" id="authToggle">¿No tienes cuenta? Regístrate</a></p>
-      <div class="install-links" id="authInstall"></div>
-    </form>
+    <section class="auth-hero">
+      <div class="brand"><span class="logo"><i data-i="wallet"></i></span><div>Agenda de Gastos<small>Tus finanzas, en orden</small></div></div>
+      <div>
+        <h1>Controla en qué y dónde se va tu dinero.</h1>
+        <p class="lead">Apunta tus gastos en segundos, mira gráficos claros y recibe un correo antes de cada cobro mensual.</p>
+        <div class="features">
+          <div class="feature"><span class="fi"><i data-i="chart-pie"></i></span><div><b>Gráficos y resúmenes</b><small>Por categoría, por día y por lugar</small></div></div>
+          <div class="feature"><span class="fi"><i data-i="bell"></i></span><div><b>Avisos por correo</b><small>Antes de cada gasto mensual</small></div></div>
+          <div class="feature"><span class="fi"><i data-i="calendar-days"></i></span><div><b>Calendario</b><small>Cada día con su total</small></div></div>
+          <div class="feature"><span class="fi"><i data-i="smartphone"></i></span><div><b>Móvil, web y ordenador</b><small>Siempre sincronizado</small></div></div>
+        </div>
+      </div>
+      <footer>Gratis · Tus datos solo los ves tú</footer>
+    </section>
+    <section class="auth-side">
+      <form id="authForm" class="auth-card" novalidate>
+        <div class="brand"><span class="logo"><i data-i="wallet"></i></span><div>Agenda de Gastos<small>Tus finanzas, en orden</small></div></div>
+        <h2 id="authTitle">Bienvenido de nuevo</h2>
+        <p class="sub" id="authSubtitle">Inicia sesión para ver tus gastos</p>
+        <label class="field reg-only">Nombre
+          <div class="input-icon"><i data-i="user"></i><input name="name" autocomplete="name" placeholder="Tu nombre" /></div>
+        </label>
+        <label class="field">Correo electrónico
+          <div class="input-icon"><i data-i="mail"></i><input name="email" type="email" required autocomplete="email" placeholder="tu@correo.com" /></div>
+        </label>
+        <label class="field">Contraseña
+          <div class="input-icon"><i data-i="lock"></i><input name="password" type="password" required minlength="6" autocomplete="current-password" placeholder="Mínimo 6 caracteres" /></div>
+        </label>
+        <div class="error" id="authError"></div>
+        <button class="btn primary full" id="authSubmit" style="height:46px">Entrar</button>
+        <p class="auth-switch"><span id="authSwitchTxt">¿No tienes cuenta?</span> <a href="#" id="authToggle">Regístrate gratis</a></p>
+        <div class="install-links" id="authInstall"></div>
+      </form>
+    </section>
   </div>
 
-  <!-- Aplicación -->
+  <!-- ============ Aplicación ============ -->
   <div id="app" class="layout hidden">
     <aside class="sidebar">
-      <div class="brand">💸 <span>Agenda de Gastos</span></div>
-      <nav id="nav">
-        <a href="#/dashboard" data-view="dashboard">📊 <span>Panel</span></a>
-        <a href="#/gastos" data-view="gastos">🧾 <span>Gastos</span></a>
-        <a href="#/calendario" data-view="calendario">📅 <span>Calendario</span></a>
-        <a href="#/mensuales" data-view="mensuales">🔁 <span>Gastos mensuales</span></a>
-        <a href="#/semanal" data-view="semanal">🗓️ <span>Resumen semanal</span></a>
-        <a href="#/ajustes" data-view="ajustes">⚙️ <span>Ajustes</span></a>
-        <a href="#/descargar" data-view="descargar" id="navDownload">📲 <span>Descargar app</span></a>
+      <div class="brand"><span class="logo"><i data-i="wallet"></i></span><div>Agenda de Gastos<small>Tus finanzas, en orden</small></div></div>
+      <nav class="nav" id="nav">
+        <div class="nav-group">
+          <div class="nav-label">General</div>
+          <a href="#/dashboard" data-view="dashboard"><i data-i="layout-dashboard"></i>Panel</a>
+          <a href="#/gastos" data-view="gastos"><i data-i="receipt-text"></i>Gastos</a>
+          <a href="#/calendario" data-view="calendario"><i data-i="calendar-days"></i>Calendario</a>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">Planificación</div>
+          <a href="#/mensuales" data-view="mensuales"><i data-i="repeat"></i>Gastos mensuales<span class="count hidden" id="dueCount"></span></a>
+          <a href="#/semanal" data-view="semanal"><i data-i="calendar-range"></i>Resumen semanal</a>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">Cuenta</div>
+          <a href="#/ajustes" data-view="ajustes"><i data-i="settings"></i>Ajustes</a>
+          <a href="#/descargar" data-view="descargar" class="nav-download"><i data-i="download"></i>Descargar app</a>
+        </div>
       </nav>
-      <div class="user-box">
+      <div class="spacer"></div>
+      <div class="user-card">
         <div class="avatar" id="avatar"></div>
-        <div class="user-info"><b id="userName"></b><small id="userEmail"></small></div>
-        <button class="icon-btn" id="logout" title="Cerrar sesión">⎋</button>
+        <div class="info"><b id="userName"></b><small id="userEmail"></small></div>
+        <button class="icon-btn sm" id="logout" title="Cerrar sesión"><i data-i="log-out"></i></button>
       </div>
     </aside>
+
+    <div class="mobile-bar">
+      <div class="brand"><span class="logo"><i data-i="wallet"></i></span>Agenda de Gastos</div>
+      <a href="#/ajustes" class="avatar" id="avatarMobile" title="Ajustes"></a>
+    </div>
+
     <main>
       <header class="topbar">
-        <h1 id="viewTitle"></h1>
-        <button class="btn primary" id="btnAdd">＋ Nuevo gasto</button>
+        <div>
+          <h1 id="viewTitle"></h1>
+          <div class="subtitle" id="viewSubtitle"></div>
+        </div>
+        <div class="actions">
+          <button class="icon-btn" id="themeBtn" title="Cambiar tema"><i data-i="moon"></i></button>
+          <button class="btn primary btn-add" id="btnAdd"><i data-i="plus"></i>Nuevo gasto</button>
+        </div>
       </header>
       <section id="view"></section>
     </main>
+
+    <nav class="tabbar" id="tabbar">
+      <a href="#/dashboard" data-view="dashboard"><i data-i="layout-dashboard"></i>Panel</a>
+      <a href="#/gastos" data-view="gastos"><i data-i="receipt-text"></i>Gastos</a>
+      <button class="tab-add" id="fabAdd" aria-label="Nuevo gasto"><span class="plus"><i data-i="plus"></i></span></button>
+      <a href="#/mensuales" data-view="mensuales"><i data-i="repeat"></i>Mensuales</a>
+      <button id="moreBtn" data-view="more"><i data-i="ellipsis"></i>Más</button>
+    </nav>
   </div>
 
   <dialog id="modal">
-    <form id="modalForm">
-      <h2 id="modalTitle"></h2>
+    <form id="modalForm" novalidate>
+      <div class="sheet-handle"></div>
+      <div class="modal-head">
+        <span id="modalIcon"></span>
+        <h2 id="modalTitle"></h2>
+        <button type="button" class="icon-btn sm" id="modalClose" aria-label="Cerrar"><i data-i="x"></i></button>
+      </div>
       <div id="modalBody"></div>
       <div class="error" id="modalError"></div>
-      <div class="modal-actions">
+      <div class="modal-actions" id="modalActions">
         <button type="button" class="btn" id="modalCancel">Cancelar</button>
         <button class="btn primary" id="modalOk">Guardar</button>
       </div>
@@ -73,6 +137,6 @@
   </dialog>
   <datalist id="placesList"></datalist>
   <div id="toast"></div>
-  <script src="app.js"></script>
+  <script src="/app.js"></script>
 </body>
 </html>

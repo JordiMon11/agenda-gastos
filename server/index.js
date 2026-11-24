@@ -23,17 +23,33 @@ class HttpError extends Error {
 const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 const DEFAULT_CATEGORIES = [
-  { name: 'Comida', icon: '🍔', color: '#f97316' },
-  { name: 'Supermercado', icon: '🛒', color: '#22c55e' },
-  { name: 'Transporte', icon: '🚗', color: '#3b82f6' },
-  { name: 'Casa', icon: '🏠', color: '#a855f7' },
-  { name: 'Facturas', icon: '💡', color: '#eab308' },
-  { name: 'Suscripciones', icon: '📺', color: '#ec4899' },
-  { name: 'Ocio', icon: '🎮', color: '#06b6d4' },
-  { name: 'Salud', icon: '💊', color: '#ef4444' },
-  { name: 'Compras', icon: '🛍️', color: '#8b5cf6' },
-  { name: 'Otros', icon: '📦', color: '#64748b' },
+  { name: 'Comida', icon: 'utensils', color: '#f97316' },
+  { name: 'Supermercado', icon: 'shopping-cart', color: '#16a34a' },
+  { name: 'Transporte', icon: 'car', color: '#2563eb' },
+  { name: 'Casa', icon: 'house', color: '#9333ea' },
+  { name: 'Facturas', icon: 'lightbulb', color: '#ca8a04' },
+  { name: 'Suscripciones', icon: 'tv', color: '#db2777' },
+  { name: 'Ocio', icon: 'gamepad-2', color: '#0891b2' },
+  { name: 'Salud', icon: 'pill', color: '#dc2626' },
+  { name: 'Compras', icon: 'shopping-bag', color: '#7c3aed' },
+  { name: 'Otros', icon: 'package', color: '#64748b' },
 ];
+// Las categorías antiguas usaban emojis: se convierten a nombres de icono
+const EMOJI_TO_ICON = {
+  '🍔': 'utensils', '🛒': 'shopping-cart', '🚗': 'car', '🏠': 'house', '💡': 'lightbulb', '📺': 'tv',
+  '🎮': 'gamepad-2', '💊': 'pill', '🛍️': 'shopping-bag', '🛍': 'shopping-bag', '📦': 'package',
+};
+const ICON_RE = /^[a-z0-9-]{1,40}$/;
+function migrateCategoryIcons() {
+  let changed = false;
+  for (const c of db.categories) {
+    if (!ICON_RE.test(c.icon || '')) {
+      c.icon = EMOJI_TO_ICON[c.icon] || 'tag';
+      changed = true;
+    }
+  }
+  if (changed) store.save();
+}
 
 const app = express();
 app.set('trust proxy', 1);
@@ -154,7 +170,7 @@ function cleanCategory(b) {
   const name = String(b?.name || '').trim().slice(0, 40);
   if (!name) throw new HttpError(400, 'La categoría necesita un nombre');
   const color = /^#[0-9a-f]{6}$/i.test(b.color) ? b.color : '#64748b';
-  return { name, color, icon: String(b.icon || '📦').slice(0, 4) };
+  return { name, color, icon: ICON_RE.test(b.icon || '') ? b.icon : 'tag' };
 }
 app.get('/api/categories', (req, res) => res.json(mine(db.categories, req)));
 app.post('/api/categories', (req, res) => {
@@ -334,6 +350,7 @@ function lanAddresses() {
 
 async function start(port = Number(process.env.PORT || 3000)) {
   await store.init();
+  migrateCategoryIcons();
   return new Promise((resolve, reject) => {
     const server = app.listen(port, '0.0.0.0', () => {
       console.log(`\n💸 Agenda de Gastos funcionando en http://localhost:${port}`);

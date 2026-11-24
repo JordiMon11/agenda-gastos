@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server/index.js",
     "desktop": "npm --prefix desktop start",
-    "desktop:build": "npm --prefix desktop run dist"
+    "desktop:build": "npm --prefix desktop run dist",
+    "icons": "node scripts/build-icons.js"
   },
   "engines": {
     "node": ">=20.12"
@@ -16,5 +17,8 @@
     "express": "^4.21.2",
     "nodemailer": "^10.6.1",
     "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "lucide": "^1.79.0"
   }
 }
