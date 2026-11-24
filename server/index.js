@@ -16,6 +16,7 @@ const S = require('./security');
 const auth = require('./auth');
 const finance = require('./finance');
 const admin = require('./admin');
+const receipts = require('./receipts');
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -58,12 +59,18 @@ const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
 app.use(S.securityHeaders);
+app.use('/api/receipts', express.json({ limit: '8mb' })); // fotos de tickets
 app.use(express.json({ limit: '200kb' }));
 app.use('/api', S.csrfGuard);
 app.use(express.static(path.join(ROOT, 'public'), {
   setHeaders: (res, p) => res.setHeader('Cache-Control', /\.(html|js|css|webmanifest)$/.test(p) ? 'no-cache' : 'public, max-age=604800'),
 }));
 app.use('/vendor', express.static(path.join(ROOT, 'node_modules', 'chart.js', 'dist')));
+// Lector de tickets gratuito en el dispositivo (Tesseract OCR + idioma español)
+const longCache = { maxAge: '30d' };
+app.use('/vendor/tesseract', express.static(path.join(ROOT, 'node_modules', 'tesseract.js', 'dist'), longCache));
+app.use('/vendor/tesseract-core', express.static(path.join(ROOT, 'node_modules', 'tesseract.js-core'), longCache));
+app.use('/vendor/tessdata', express.static(path.join(ROOT, 'node_modules', '@tesseract.js-data', 'spa', '4.0.0_best_int'), longCache));
 
 // ---------- Rutas públicas ----------
 app.get('/healthz', (req, res) => res.json({ ok: true, cifrado: S.hasKey() }));
@@ -90,6 +97,7 @@ app.use('/api', auth.authMiddleware);
 app.use('/api', auth.router);
 app.use('/api', finance.router);
 app.use('/api/admin', admin.router);
+app.use('/api', receipts.router);
 
 // ---------- Categorías ----------
 const mine = (list, req) => list.filter((x) => x.userId === req.user.id);
@@ -156,7 +164,7 @@ app.get('/api/expenses', (req, res) => {
   res.json(list.sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || '').localeCompare(a.createdAt || '')));
 });
 app.post('/api/expenses', h(async (req, res) => {
-  const e = { id: store.id(), userId: req.user.id, ...cleanExpense(req.body, req), createdAt: new Date().toISOString() };
+  const e = { id: store.id(), userId: req.user.id, ...cleanExpense(req.body, req), ...(req.body?.scanned ? { scanned: true } : {}), createdAt: new Date().toISOString() };
   db.expenses.push(e);
   store.save();
   res.json(e);
@@ -270,7 +278,7 @@ app.post('/api/mail/test', h(async (req, res) => res.json(await mailer.send(mail
 app.use('/api', (req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
 app.use((err, req, res, next) => {
   if (!err.status) console.error(err);
-  res.status(err.status || 500).json({ error: err.status ? err.message : 'Error interno: ' + err.message });
+  res.status(err.status || err.statusCode || 500).json({ error: err.status ? err.message : err.type === 'entity.too.large' ? 'Archivo demasiado grande' : 'Error interno', ...(err.fallback ? { fallback: true } : {}), ...(err.code && typeof err.code === 'string' && err.status ? { code: err.code } : {}) });
 });
 
 function lanAddresses() {

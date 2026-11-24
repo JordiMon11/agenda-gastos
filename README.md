@@ -99,3 +99,10 @@ render.yaml Despliegue en Render
 - Desde el panel: resumen de usuarios y registros, estado del sistema, lista de usuarios con buscador y filtros, editar nombre y correo, enviar enlace para restablecer contraseña, generar contraseña temporal (obliga a cambiarla al entrar), quitar el 2FA, desbloquear, cerrar sesiones, dar o quitar administrador, desactivar o reactivar cuentas y eliminarlas.
 - **Ajustes de la app**: abrir o cerrar el registro de usuarios y publicar un aviso para todos.
 - Todas las acciones quedan en el **registro de acciones**. El administrador **no ve los gastos ni los ingresos** de los usuarios, solo cuántos registros tienen.
+
+## Escanear tickets
+
+Botón **Escanear ticket** (arriba en el ordenador, icono de escáner en el móvil, y dentro de «Nuevo gasto»). Se hace una foto al ticket y el gasto **se guarda automáticamente con fecha de hoy**, con importe, tienda, categoría y artículos en las notas. Después se abre para revisarlo y cambiar lo que haga falta (si el ticket tiene otra fecha, aparece un botón para usarla).
+
+- **Gratis por defecto:** la foto se lee en el propio dispositivo con OCR (Tesseract) y unas reglas para tickets españoles. No se envía a ningún sitio.
+- **Opcional, con IA (de pago):** si en Render añades la variable `ANTHROPIC_API_KEY` (clave de https://console.anthropic.com), el servidor usa Claude Opus 5.5 para leer el ticket, con mucha más precisión. Cuesta aproximadamente 1-2 céntimos por ticket. Si la IA falla, la app usa automáticamente el lector gratuito.

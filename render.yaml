@@ -21,6 +21,8 @@ services:
         sync: false
       - key: MAIL_FROM_NAME
         value: Agenda de Gastos
+      - key: ANTHROPIC_API_KEY   # opcional: lectura de tickets con IA (de pago, ~1-2 céntimos por ticket)
+        sync: false
       - key: DESKTOP_DOWNLOAD_URL
         sync: false
       - key: RELEASES_URL

@@ -231,12 +231,21 @@ async function loadPlaces() {
 }
 
 // ---------- Formularios ----------
-function expenseForm(exp = {}, preset = {}) {
+function expenseForm(exp = {}, preset = {}, extra = {}) {
   loadPlaces();
+  const scan = extra.scan;
+  if (!exp.id && extra.prefill) exp = { ...extra.prefill, ...exp };
+  const scanBanner = scan
+    ? `<div class="notice ${scan.saved ? 'ok' : 'warn'}" style="margin-bottom:16px">${ic(scan.saved ? 'sparkles' : 'triangle-alert', 'sm')}<span>${scan.saved
+        ? `<b>Añadido automáticamente</b> desde la foto del ticket (${scan.source === 'ai' ? 'leído con IA' : 'leído en tu dispositivo'}). Revisa los datos y cambia lo que quieras.`
+        : '<b>No he podido leer el total del ticket.</b> Escribe el importe y revisa el resto de datos.'}${scan.uncertain && scan.saved ? ' Comprueba el importe: no estaba del todo claro.' : ''}</span></div>
+      ${scan.saved ? '' : '<input type="hidden" name="scanned" value="1">'}
+      ${scan.ticketDate ? `<div class="scan-date">${ic('calendar-days', 'sm')}<span>El ticket es del <b>${fmtDate(scan.ticketDate, { day: 'numeric', month: 'long', year: 'numeric' })}</b></span><button type="button" class="btn sm" id="useTicketDate">Usar esa fecha</button></div>` : ''}`
+    : !exp.id ? `<button type="button" class="btn full scan-btn" id="scanInForm">${ic('scan-line', 'sm')}Escanear un ticket con la cámara</button>` : '';
   openModal({
-    title: exp.id ? 'Editar gasto' : 'Nuevo gasto',
-    icon: exp.id ? 'pencil' : 'receipt-text',
-    html: `
+    title: scan?.saved ? 'Gasto del ticket' : exp.id ? 'Editar gasto' : 'Nuevo gasto',
+    icon: scan ? 'scan-line' : exp.id ? 'pencil' : 'receipt-text',
+    html: `${scanBanner}
       <label class="field">Importe
         <div class="input-money"><input name="amount" type="number" inputmode="decimal" step="0.01" min="0.01" required value="${exp.amount ?? ''}" placeholder="0,00"><span>€</span></div>
       </label>
@@ -258,6 +267,12 @@ function expenseForm(exp = {}, preset = {}) {
   });
   bindCatPicker($('#modalBody'));
   $('#delInModal')?.addEventListener('click', () => deleteExpense(exp));
+  $('#scanInForm')?.addEventListener('click', () => { closeModal(); pickReceipt(); });
+  $('#useTicketDate')?.addEventListener('click', (e) => {
+    $('#modalBody input[name=date]').value = scan.ticketDate;
+    e.currentTarget.disabled = true;
+    e.currentTarget.textContent = 'Fecha cambiada';
+  });
 }
 
 function recurringForm(rec = {}) {
@@ -342,7 +357,7 @@ function deleteExpense(e) {
 
 const expenseRow = (e, { actions = false, date = true } = {}) => {
   const c = catOf(e.categoryId);
-  const meta = [date ? fmtDate(e.date) : '', esc(c.name), e.place ? `${ic('map-pin')}${esc(e.place)}` : '', e.recurringId ? `${ic('repeat')}Mensual` : '']
+  const meta = [date ? fmtDate(e.date) : '', esc(c.name), e.place ? `${ic('map-pin')}${esc(e.place)}` : '', e.recurringId ? `${ic('repeat')}Mensual` : '', e.scanned ? `${ic('scan-line')}Ticket` : '']
     .filter(Boolean)
     .join('<span class="dot-sep"></span>');
   return `<div class="li click" data-id="${e.id}">

@@ -110,6 +110,7 @@
 
     <div class="mobile-bar">
       <div class="brand"><span class="logo"><i data-i="wallet"></i></span>Agenda de Gastos</div>
+      <button class="icon-btn" id="btnScanMobile" title="Escanear ticket"><i data-i="scan-line"></i></button>
       <a href="#/ajustes" class="avatar" id="avatarMobile" title="Ajustes"></a>
     </div>
 
@@ -122,6 +123,7 @@
         </div>
         <div class="actions">
           <button class="icon-btn" id="themeBtn" title="Cambiar tema"><i data-i="moon"></i></button>
+          <button class="btn btn-scan" id="btnScan"><i data-i="scan-line"></i>Escanear ticket</button>
           <button class="btn primary btn-add" id="btnAdd"><i data-i="plus"></i><span id="btnAddTxt">Nuevo gasto</span></button>
         </div>
       </header>
@@ -156,5 +158,6 @@
   <datalist id="placesList"></datalist>
   <div id="toast"></div>
   <script src="/app.js"></script>
+  <script src="/receipt.js"></script>
 </body>
 </html>
