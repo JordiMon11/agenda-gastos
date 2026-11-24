@@ -171,6 +171,47 @@ function weeklyEmail(user, s) {
   };
 }
 
+const when = () => new Date().toLocaleString('es-ES', { dateStyle: 'full', timeStyle: 'short', timeZone: 'Europe/Madrid' });
+function newLoginEmail(user, device, ip) {
+  return {
+    to: user.email,
+    subject: 'Nuevo inicio de sesión en tu cuenta',
+    html: layout(
+      `Alguien ha entrado en tu cuenta desde ${device}`,
+      'Nuevo inicio de sesión',
+      `<p style="margin:0 0 12px">Hola ${esc(user.name)}, se ha iniciado sesión en tu cuenta desde un dispositivo nuevo:</p>
+       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 18px;font-size:14px">
+        ${row('Dispositivo', esc(device))}${row('Dirección IP', esc(ip))}${row('Fecha', esc(when()))}
+       </table>
+       <p style="margin:0;color:#6b7280;font-size:13px"><b style="color:#111827">¿No has sido tú?</b> Entra en la app, ve a <b>Seguridad</b>, cierra las demás sesiones y cambia tu contraseña.</p>`
+    ),
+  };
+}
+function lockedEmail(user, ip) {
+  return {
+    to: user.email,
+    subject: 'Hemos bloqueado temporalmente el acceso a tu cuenta',
+    html: layout(
+      'Varios intentos de acceso fallidos',
+      'Acceso bloqueado 15 minutos',
+      `<p style="margin:0 0 12px">Hola ${esc(user.name)}, ha habido 5 intentos seguidos con una contraseña incorrecta (IP ${esc(ip)}), así que hemos bloqueado el acceso durante 15 minutos.</p>
+       <p style="margin:0;color:#6b7280;font-size:13px">Si no has sido tú, te recomendamos activar la verificación en dos pasos en el apartado <b>Seguridad</b>.</p>`
+    ),
+  };
+}
+function securityChangeEmail(user, text) {
+  return {
+    to: user.email,
+    subject: 'Cambio de seguridad en tu cuenta',
+    html: layout(
+      text,
+      'Cambio de seguridad',
+      `<p style="margin:0 0 12px">Hola ${esc(user.name)}. ${esc(text)}</p>
+       <p style="margin:0;color:#6b7280;font-size:13px">Fecha: ${esc(when())}. Si no has sido tú, cambia tu contraseña inmediatamente.</p>`
+    ),
+  };
+}
+
 function testEmail(user) {
   return {
     to: user.email,
@@ -179,4 +220,4 @@ function testEmail(user) {
   };
 }
 
-module.exports = { send, configured, useBrevo, welcomeEmail, reminderEmail, weeklyEmail, testEmail, OUTBOX };
+module.exports = { send, configured, useBrevo, welcomeEmail, reminderEmail, weeklyEmail, testEmail, newLoginEmail, lockedEmail, securityChangeEmail, OUTBOX };

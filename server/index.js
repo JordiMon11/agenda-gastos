@@ -5,7 +5,6 @@ try {
 } catch {}
 
 const express = require('express');
-const crypto = require('crypto');
 const os = require('os');
 const store = require('./db');
 const { db } = store;
@@ -13,6 +12,9 @@ const D = require('./dates');
 const mailer = require('./mailer');
 const scheduler = require('./scheduler');
 const { weekSummary, round } = require('./summary');
+const S = require('./security');
+const auth = require('./auth');
+const finance = require('./finance');
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -53,12 +55,17 @@ function migrateCategoryIcons() {
 
 const app = express();
 app.set('trust proxy', 1);
-app.use(express.json({ limit: '1mb' }));
-app.use(express.static(path.join(ROOT, 'public'), { setHeaders: (res, p) => p.endsWith('sw.js') && res.setHeader('Cache-Control', 'no-cache') }));
+app.disable('x-powered-by');
+app.use(S.securityHeaders);
+app.use(express.json({ limit: '200kb' }));
+app.use('/api', S.csrfGuard);
+app.use(express.static(path.join(ROOT, 'public'), {
+  setHeaders: (res, p) => res.setHeader('Cache-Control', /\.(html|js|css|webmanifest)$/.test(p) ? 'no-cache' : 'public, max-age=604800'),
+}));
 app.use('/vendor', express.static(path.join(ROOT, 'node_modules', 'chart.js', 'dist')));
 
 // ---------- Rutas públicas ----------
-app.get('/healthz', (req, res) => res.json({ ok: true }));
+app.get('/healthz', (req, res) => res.json({ ok: true, cifrado: S.hasKey() }));
 app.get('/api/public-config', (req, res) =>
   res.json({ downloadUrl: process.env.DESKTOP_DOWNLOAD_URL || 'https://github.com/JordiMon11/agenda-gastos/releases/latest/download/Agenda-Gastos-Setup.exe',
     releasesUrl: process.env.RELEASES_URL || 'https://github.com/JordiMon11/agenda-gastos/releases/latest', })
@@ -74,90 +81,12 @@ app.all('/api/cron', h(async (req, res) => {
   res.json({ ok: true, at: new Date().toISOString() });
 }));
 
-// ---------- Autenticación ----------
-function hashPw(pw, salt = crypto.randomBytes(16).toString('hex')) {
-  return { salt, hash: crypto.scryptSync(String(pw), salt, 64).toString('hex') };
-}
-function publicUser(u) {
-  const { passHash, salt, ...rest } = u;
-  return rest;
-}
-function newSession(u) {
-  const token = crypto.randomBytes(32).toString('hex');
-  db.sessions.push({ token, userId: u.id, createdAt: Date.now() });
-  store.save();
-  return token;
-}
-
-app.post('/api/auth/register', h(async (req, res) => {
-  const name = String(req.body?.name || '').trim();
-  const email = String(req.body?.email || '').trim().toLowerCase();
-  const password = String(req.body?.password || '');
-  if (!name || !/^\S+@\S+\.\S+$/.test(email) || password.length < 6)
-    throw new HttpError(400, 'Rellena tu nombre, un correo válido y una contraseña de al menos 6 caracteres');
-  if (db.users.some((u) => u.email === email)) throw new HttpError(409, 'Ya existe una cuenta con ese correo');
-  const { salt, hash } = hashPw(password);
-  const user = {
-    id: store.id(),
-    name,
-    email,
-    salt,
-    passHash: hash,
-    createdAt: new Date().toISOString(),
-    notify: { reminders: true, weekly: true },
-    lastWeeklySent: D.ymd(D.weekStart(D.today())),
-  };
-  db.users.push(user);
-  for (const c of DEFAULT_CATEGORIES) db.categories.push({ id: store.id(), userId: user.id, ...c });
-  store.save();
-  mailer.send(mailer.welcomeEmail(user)).catch((e) => console.error('[bienvenida]', e.message));
-  res.json({ token: newSession(user), user: publicUser(user) });
-}));
-
-app.post('/api/auth/login', h(async (req, res) => {
-  const email = String(req.body?.email || '').trim().toLowerCase();
-  const user = db.users.find((u) => u.email === email);
-  const ok =
-    user &&
-    crypto.timingSafeEqual(Buffer.from(hashPw(req.body?.password || '', user.salt).hash, 'hex'), Buffer.from(user.passHash, 'hex'));
-  if (!ok) throw new HttpError(401, 'Correo o contraseña incorrectos');
-  res.json({ token: newSession(user), user: publicUser(user) });
-}));
-
-function auth(req, res, next) {
-  const token = (req.headers.authorization || '').replace(/^Bearer /, '');
-  const s = token && db.sessions.find((s) => s.token === token);
-  const user = s && db.users.find((u) => u.id === s.userId);
-  if (!user) return res.status(401).json({ error: 'No has iniciado sesión' });
-  req.user = user;
-  req.token = token;
-  next();
-}
-app.use('/api', auth);
-
-app.post('/api/auth/logout', (req, res) => {
-  db.sessions = db.sessions.filter((s) => s.token !== req.token);
-  store.save();
-  res.json({ ok: true });
-});
-
-// ---------- Perfil ----------
-app.get('/api/me', (req, res) => res.json(publicUser(req.user)));
-app.put('/api/me', h(async (req, res) => {
-  const b = req.body || {};
-  if (b.name !== undefined) {
-    if (!String(b.name).trim()) throw new HttpError(400, 'El nombre no puede estar vacío');
-    req.user.name = String(b.name).trim().slice(0, 60);
-  }
-  if (b.notify) req.user.notify = { reminders: !!b.notify.reminders, weekly: !!b.notify.weekly };
-  if (b.newPassword) {
-    if (String(b.newPassword).length < 6) throw new HttpError(400, 'La contraseña debe tener al menos 6 caracteres');
-    const { salt, hash } = hashPw(b.newPassword);
-    Object.assign(req.user, { salt, passHash: hash });
-  }
-  store.save();
-  res.json(publicUser(req.user));
-}));
+// ---------- Autenticación (ver server/auth.js) ----------
+auth.router.DEFAULT_CATEGORIES = DEFAULT_CATEGORIES;
+app.use('/api', auth.publicRouter);
+app.use('/api', auth.authMiddleware);
+app.use('/api', auth.router);
+app.use('/api', finance.router);
 
 // ---------- Categorías ----------
 const mine = (list, req) => list.filter((x) => x.userId === req.user.id);
@@ -351,6 +280,8 @@ function lanAddresses() {
 async function start(port = Number(process.env.PORT || 3000)) {
   await store.init();
   migrateCategoryIcons();
+  auth.migrateSessions();
+  if (!S.hasKey()) console.warn("   ⚠ Falta APP_SECRET: los secretos del 2FA se guardarán sin cifrar");
   return new Promise((resolve, reject) => {
     const server = app.listen(port, '0.0.0.0', () => {
       console.log(`\n💸 Agenda de Gastos funcionando en http://localhost:${port}`);

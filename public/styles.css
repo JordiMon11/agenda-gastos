@@ -451,8 +451,8 @@ code { background: var(--surface-3); border-radius: 6px; padding: 1px 6px; font-
 .dl-card h3 { margin: 4px 0 0; font-size: 17px; }
 .dl-card p { margin: 0; color: var(--muted); font-size: 14px; }
 .steps { margin: 0; padding: 0; list-style: none; counter-reset: s; display: grid; gap: 10px; font-size: 14px; color: var(--text-2); }
-.steps li { counter-increment: s; display: flex; gap: 10px; align-items: flex-start; }
-.steps li::before { content: counter(s); width: 22px; height: 22px; border-radius: 7px; background: var(--primary-soft); color: var(--primary); font-weight: 700; font-size: 12px; display: grid; place-items: center; flex-shrink: 0; }
+.steps li { counter-increment: s; position: relative; padding-left: 32px; min-height: 22px; }
+.steps li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 22px; height: 22px; border-radius: 7px; background: var(--primary-soft); color: var(--primary); font-weight: 700; font-size: 12px; display: grid; place-items: center; flex-shrink: 0; }
 .dl-card .hint { font-size: 12.5px; color: var(--muted); }
 
 /* ---------- Modal ---------- */
@@ -565,3 +565,81 @@ dialog form { padding: 24px; }
 .cat-pick button .i { width: 15px; height: 15px; color: var(--c); }
 .cat-pick button:hover { border-color: var(--c); }
 .cat-pick button.on { background: color-mix(in srgb, var(--c) 14%, transparent); border-color: var(--c); color: var(--text); }
+
+/* ---------- Contraseña ---------- */
+.pw-wrap { position: relative; }
+.pw-wrap input { padding-right: 44px; }
+.pw-eye { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 34px; height: 34px; border: none; background: none; color: var(--muted); border-radius: 9px; cursor: pointer; display: grid; place-items: center; }
+.pw-eye:hover { background: var(--surface-3); color: var(--text); }
+.pw-eye .i { position: static; transform: none; }
+.pw-meter { margin: -6px 0 10px; }
+.pw-meter:empty { display: none; }
+.pw-bars { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-bottom: 6px; }
+.pw-bars span { height: 5px; border-radius: 99px; background: var(--surface-3); }
+.pw-meter small { font-size: 12.5px; color: var(--muted); }
+.pw-meter[data-l='1'] .pw-bars span:nth-child(-n+1) { background: var(--danger); }
+.pw-meter[data-l='2'] .pw-bars span:nth-child(-n+2) { background: var(--warn); }
+.pw-meter[data-l='3'] .pw-bars span:nth-child(-n+3) { background: #65a30d; }
+.pw-meter[data-l='4'] .pw-bars span { background: var(--success); }
+
+/* ---------- Código 2FA ---------- */
+.code-input { font-size: 28px; font-weight: 700; letter-spacing: .45em; text-align: center; height: 60px; font-variant-numeric: tabular-nums; padding-left: .45em; }
+.qr-box { display: flex; gap: 18px; align-items: center; background: var(--surface-2); border: 1px solid var(--border); border-radius: 16px; padding: 14px; margin-bottom: 16px; }
+.qr-box img { width: 150px; height: 150px; border-radius: 10px; background: #fff; padding: 6px; flex-shrink: 0; }
+.qr-box .secret { font-family: ui-monospace, Consolas, monospace; font-size: 13px; font-weight: 600; word-break: break-all; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; margin: 8px 0; }
+.codes-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 4px 0 16px; }
+.codes-grid code { font-size: 15px; padding: 10px; text-align: center; letter-spacing: .06em; border: 1px solid var(--border); background: var(--surface-2); }
+
+/* ---------- Seguridad ---------- */
+.level { display: flex; gap: 22px; align-items: center; }
+.level .ring { width: 92px; height: 92px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0; background: conic-gradient(var(--lc) calc(var(--p) * 1%), var(--surface-3) 0); }
+.level .ring div { width: 74px; height: 74px; border-radius: 50%; background: var(--surface); display: grid; place-items: center; font-weight: 800; font-size: 20px; }
+.level h2 { margin: 0 0 4px; font-size: 21px; font-weight: 800; }
+.checklist { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 20px; margin-top: 18px; }
+.checklist div { display: flex; gap: 10px; align-items: center; font-size: 14px; color: var(--text-2); }
+.checklist .ok { color: var(--success); }
+.checklist .no { color: var(--warn); }
+.ev-ic { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; flex-shrink: 0; background: var(--surface-3); color: var(--text-2); }
+.ev-ic.bad { background: var(--danger-soft); color: var(--danger); }
+.ev-ic.good { background: var(--success-soft); color: var(--success); }
+
+/* ---------- Tabla tipo Excel ---------- */
+.xl-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 14px; }
+table.xl { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; min-width: 640px; }
+table.xl th { position: sticky; top: 0; background: var(--surface-2); text-align: left; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 11px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; user-select: none; }
+table.xl th[data-sort] { cursor: pointer; }
+table.xl th[data-sort]:hover { color: var(--text); }
+table.xl th .i { width: 13px; height: 13px; margin-left: 4px; opacity: .5; }
+table.xl th.on { color: var(--primary); }
+table.xl th.on .i { opacity: 1; }
+table.xl td { padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+table.xl tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--surface-2) 60%, transparent); }
+table.xl tbody tr:hover td { background: var(--primary-soft); }
+table.xl td.num, table.xl th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.xl td.date { white-space: nowrap; color: var(--text-2); }
+table.xl tfoot td { font-weight: 800; background: var(--surface-2); border-bottom: none; }
+table.xl .acts { white-space: nowrap; text-align: right; width: 1%; }
+.income-amt { color: var(--success); font-weight: 700; }
+
+/* ---------- Ahorros ---------- */
+.hero.green { background: radial-gradient(600px 300px at 100% 0%, rgb(255 255 255 / 18%), transparent 60%), linear-gradient(135deg, #059669 0%, #0d9488 55%, #0891b2 100%); box-shadow: 0 18px 40px -18px #059669aa; }
+.saving-card { display: flex; flex-direction: column; gap: 14px; }
+.saving-card .top { display: flex; align-items: center; gap: 12px; }
+.saving-card .top b { display: block; font-size: 15.5px; }
+.saving-card .top small { color: var(--muted); font-size: 13px; }
+.saving-card .bal { font-size: 28px; font-weight: 800; letter-spacing: -0.03em; }
+.saving-card .goal-line { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-top: 8px; }
+.saving-card .btns { display: flex; gap: 6px; margin-top: auto; }
+.saving-card .btns .btn { flex: 1; }
+.move-in { color: var(--success); }
+.move-out { color: var(--danger); }
+.seg.full { display: flex; width: 100%; margin-bottom: 16px; }
+.seg.full button { flex: 1; justify-content: center; }
+
+@media (max-width: 900px) {
+  .checklist { grid-template-columns: 1fr; }
+  .level { gap: 16px; }
+  .level .ring { width: 76px; height: 76px; }
+  .level .ring div { width: 60px; height: 60px; font-size: 17px; }
+  .qr-box { flex-direction: column; text-align: center; }
+}

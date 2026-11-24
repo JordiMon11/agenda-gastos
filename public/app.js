@@ -5,8 +5,7 @@ const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} },
 };
-const TOKEN_KEY = 'agenda_gastos_token';
-let token = store.get(TOKEN_KEY);
+store.set('agenda_gastos_token', null); // la sesión ahora va en una cookie protegida
 let me = null;
 let cats = [];
 let charts = [];
@@ -40,8 +39,8 @@ const catOf = (id) => cats.find((c) => c.id === id) || NO_CAT;
 const safeColor = (c) => (/^#[0-9a-f]{6}$/i.test(c) ? c : '#94a3b8');
 const catIc = (c, cls = '') => `<span class="cat-ic ${cls}" style="--c:${safeColor(c.color)}">${ic(c.icon)}</span>`;
 const catTag = (c) => `<span class="cat-tag" style="--c:${safeColor(c.color)}">${ic(c.icon)}${esc(c.name)}</span>`;
-const trendHtml = (p, suffix = '') =>
-  p === null ? '' : `<span class="trend ${p > 0 ? 'up' : 'down'}">${ic(p > 0 ? 'trending-up' : 'trending-down', 'xs')}${Math.abs(p).toFixed(0)}%</span>${suffix}`;
+const trendHtml = (p, suffix = '', upIsGood = false) =>
+  p === null ? '' : `<span class="trend ${(p > 0) !== upIsGood ? 'up' : 'down'}">${ic(p > 0 ? 'trending-up' : 'trending-down', 'xs')}${Math.abs(p).toFixed(0)}%</span>${suffix}`;
 const emptyHtml = (icon, title, text, action = '') =>
   `<div class="empty"><span class="ichip">${ic(icon, 'lg')}</span><b>${title}</b>${text ? `<p>${text}</p>` : ''}${action}</div>`;
 
@@ -55,16 +54,80 @@ function toast(msg, isError = false) {
 }
 
 async function api(path, { method = 'GET', body } = {}) {
-  const r = await fetch('/api' + path, {
-    method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let r;
+  try {
+    r = await fetch('/api' + path, {
+      method,
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'agenda' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error('Sin conexión con el servidor');
+  }
   const data = (r.headers.get('content-type') || '').includes('json') ? await r.json() : null;
-  if (r.status === 401 && token && !path.startsWith('/auth')) { showAuth(); throw new Error('Tu sesión ha caducado'); }
+  if (r.status === 401 && me && !path.startsWith('/auth') && !path.startsWith('/me/') && !path.startsWith('/2fa')) { showAuth(); throw new Error('Tu sesión ha caducado'); }
   if (!r.ok) throw new Error(data?.error || 'No se pudo conectar con el servidor');
   return data;
 }
+// Descarga un archivo de la API (p. ej. el Excel) usando la sesión
+async function download(path, fallbackName) {
+  const r = await fetch('/api' + path, { credentials: 'same-origin' });
+  if (!r.ok) throw new Error('No se pudo generar el archivo');
+  const name = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') || '')?.[1] || fallbackName;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(await r.blob());
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+const copyText = async (t) => { try { await navigator.clipboard.writeText(t); toast('Copiado'); } catch { toast('No se pudo copiar', true); } };
+function ago(ts) {
+  const s = Math.round((Date.now() - new Date(ts).getTime()) / 1000);
+  if (s < 90) return 'ahora mismo';
+  if (s < 3600) return `hace ${Math.round(s / 60)} min`;
+  if (s < 86400) return `hace ${Math.round(s / 3600)} h`;
+  if (s < 86400 * 7) return `hace ${Math.round(s / 86400)} días`;
+  return new Date(ts).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+// Fuerza de la contraseña (0-4)
+function pwScore(pw) {
+  if (!pw) return 0;
+  let s = 0;
+  if (pw.length >= 8) s++;
+  if (pw.length >= 12) s++;
+  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) s++;
+  if (/\d/.test(pw) && /[^a-zA-Z0-9]/.test(pw)) s++;
+  if (pw.length < 8 || !/\d/.test(pw) || !/[a-zA-Z]/.test(pw)) s = Math.min(s, 1);
+  return Math.max(1, s);
+}
+const PW_TXT = ['', 'Débil: usa 8+ caracteres con letras y números', 'Aceptable', 'Buena', 'Muy segura'];
+function paintMeter(el, pw) {
+  if (!el) return;
+  if (!pw) { el.innerHTML = ''; return; }
+  const l = pwScore(pw);
+  el.dataset.l = l;
+  el.innerHTML = `<div class="pw-bars"><span></span><span></span><span></span><span></span></div><small>${PW_TXT[l]}</small>`;
+}
+// Botones de mostrar/ocultar contraseña
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('.pw-eye');
+  if (!b) return;
+  const input = b.parentElement.querySelector('input');
+  input.type = input.type === 'password' ? 'text' : 'password';
+  b.innerHTML = ic(input.type === 'password' ? 'eye' : 'eye-off');
+});
+// Acciones declarativas (la política de seguridad no permite onclick en el HTML)
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('[data-act]');
+  if (!a) return;
+  const act = a.dataset.act;
+  if (act === 'new-expense') expenseForm();
+  if (act === 'new-income') incomeForm();
+  if (act === 'new-saving') savingForm();
+  if (act === 'retry') route();
+});
 
 // ---------- Tema ----------
 const THEME_KEY = 'agenda_tema';
@@ -116,6 +179,7 @@ function openModal({ title, icon = '', html, onSubmit, okText = 'Guardar', dange
   $('#modalOk').textContent = okText;
   $('#modalOk').className = 'btn ' + (danger ? 'danger solid' : 'primary');
   $('#modalActions').classList.toggle('hidden', !actions);
+  $('#modalCancel').classList.remove('hidden');
   hydrate($('#modalBody'));
   modalSubmit = onSubmit;
   $('#modal').showModal();
@@ -325,9 +389,12 @@ async function renderDashboard(el) {
   const t = todayD();
   const from = ymd(new Date(t.getFullYear(), t.getMonth() - 5, 1));
   const to = ymd(new Date(t.getFullYear(), t.getMonth() + 1, 0));
-  const [exps, recs] = await Promise.all([api(`/expenses?from=${from}&to=${to}`), api('/recurring')]);
+  const [exps, recs, incs, savs] = await Promise.all([api(`/expenses?from=${from}&to=${to}`), api('/recurring'), api(`/incomes?from=${ymd(new Date(t.getFullYear(), t.getMonth(), 1))}&to=${to}`), api('/savings')]);
   updateDueBadge(recs);
   const mk = monthKey(t);
+  const incTotal = sum(incs);
+  const savTotal = savs.reduce((a, s) => a + s.balance, 0);
+  const savMonth = savs.reduce((a, s) => a + s.month, 0);
   const prevD = new Date(t.getFullYear(), t.getMonth() - 1, 1);
   const monthExp = exps.filter((e) => e.date.startsWith(mk));
   const monthTotal = sum(monthExp);
@@ -378,12 +445,12 @@ async function renderDashboard(el) {
   <div class="grid g4 stats">
     <div class="card stat"><div class="top"><span class="label">Esta semana</span><span class="ichip">${ic('calendar-range')}</span></div>
       <div><div class="value">${eur(weekTotal)}</div><div class="sub">${trendHtml(pct(weekTotal, prevWeekTotal), ' vs. semana pasada') || 'Desde el lunes'}</div></div></div>
-    <div class="card stat"><div class="top"><span class="label">Media diaria</span><span class="ichip green">${ic('activity')}</span></div>
-      <div><div class="value">${eur(avg)}</div><div class="sub">En ${monthName(t, false)}</div></div></div>
+    <a class="card stat" href="#/ingresos" style="color:inherit"><div class="top"><span class="label">Ingresos del mes</span><span class="ichip green">${ic('hand-coins')}</span></div>
+      <div><div class="value">${eur(incTotal)}</div><div class="sub">Balance: <b style="color:var(${incTotal - monthTotal >= 0 ? '--success' : '--danger'})">${incTotal - monthTotal >= 0 ? '+' : ''}${eur(incTotal - monthTotal)}</b></div></div></a>
     <div class="card stat"><div class="top"><span class="label">Gastos fijos</span><span class="ichip amber">${ic('repeat')}</span></div>
       <div><div class="value">${eur(fixed)}</div><div class="sub">${active.length} al mes</div></div></div>
-    <div class="card stat"><div class="top"><span class="label">Mayor categoría</span><span class="ichip red">${ic('trophy')}</span></div>
-      <div><div class="value">${catItems[0] ? eur(catItems[0].total) : '—'}</div><div class="sub">${catItems[0] ? esc(catItems[0].name) : 'Sin gastos todavía'}</div></div></div>
+    <a class="card stat" href="#/ahorros" style="color:inherit"><div class="top"><span class="label">Ahorrado</span><span class="ichip">${ic('piggy-bank')}</span></div>
+      <div><div class="value">${eur(savTotal)}</div><div class="sub">${savs.length ? `${savMonth >= 0 ? '+' : '−'}${eur(Math.abs(savMonth))} este mes` : 'Crea tu primera hucha'}</div></div></a>
   </div>
 
   <div class="grid g3">
@@ -414,7 +481,7 @@ async function renderDashboard(el) {
   <div class="card">
     <div class="card-head"><h3>${ic('clock', 'sm')}Últimos gastos</h3><a class="link" href="#/gastos">Ver todos${ic('chevron-right', 'xs')}</a></div>
     <div class="list" id="recent">${exps.slice(0, 6).map((e) => expenseRow(e)).join('')
-      || emptyHtml('receipt-text', 'Todavía no hay gastos', 'Pulsa «Nuevo gasto» para apuntar el primero.', `<button class="btn primary sm" onclick="expenseForm()">${ic('plus', 'sm')}Nuevo gasto</button>`)}</div>
+      || emptyHtml('receipt-text', 'Todavía no hay gastos', 'Pulsa «Nuevo gasto» para apuntar el primero.', `<button class="btn primary sm" data-act="new-expense">${ic('plus', 'sm')}Nuevo gasto</button>`)}</div>
   </div>`;
 
   bindExpenseClicks($('#recent'), exps);
@@ -452,7 +519,7 @@ async function renderExpenses(el) {
     <div class="month-nav"><button class="icon-btn" id="mPrev" title="Mes anterior">${ic('chevron-left')}</button><span class="lbl">${cap(monthName(mDate))}</span><button class="icon-btn" id="mNext" title="Mes siguiente">${ic('chevron-right')}</button></div>
     <select id="fCat"><option value="">Todas las categorías</option><option value="none">Sin categoría</option>${cats.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
     <div class="input-icon grow">${ic('search')}<input type="search" id="fQ" placeholder="Buscar concepto, lugar o nota…" value="${esc(state.q)}"></div>
-    <button class="btn" id="btnCsv">${ic('file-down', 'sm')}Exportar</button>
+    <button class="btn" id="btnCsv">${ic('file-spreadsheet', 'sm')}Excel</button>
   </div>
   <div class="card"><div id="tbl"><div class="skeleton" style="height:240px"></div></div></div>`;
   $('#fCat').value = state.cat;
@@ -491,15 +558,7 @@ async function renderExpenses(el) {
   $('#fCat').onchange = (e) => { state.cat = e.target.value; load(); };
   let qt;
   $('#fQ').oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => { state.q = e.target.value; load(); }, 250); };
-  $('#btnCsv').onclick = () => {
-    if (!list.length) return toast('No hay gastos que exportar', true);
-    const rows = [['Fecha', 'Concepto', 'Categoría', 'Lugar', 'Importe', 'Notas'], ...list.map((e) => [e.date, e.name, catOf(e.categoryId).name, e.place, String(e.amount).replace('.', ','), e.notes])];
-    const csv = '﻿' + rows.map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';')).join('\r\n');
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = `gastos-${state.month}.csv`;
-    a.click();
-  };
+  $('#btnCsv').onclick = exportModal;
   await load();
 }
 
@@ -704,11 +763,11 @@ async function renderSettings(el) {
   <div class="grid g2">
     <div class="card">
       <div class="card-head"><h3>${ic('user', 'sm')}Perfil</h3></div>
-      <p class="set-desc">Tu nombre y la contraseña de acceso.</p>
+      <p class="set-desc">Tu nombre y el correo vinculado.</p>
       <form id="profileForm">
         <label class="field">Nombre<input name="name" value="${esc(me.name)}" required maxlength="60"></label>
         <label class="field">Correo vinculado<div class="input-icon">${ic('mail')}<input value="${esc(me.email)}" disabled></div></label>
-        <label class="field">Nueva contraseña<div class="input-icon">${ic('lock')}<input name="newPassword" type="password" minlength="6" autocomplete="new-password" placeholder="Déjalo vacío para no cambiarla"></div></label>
+        <p class="set-desc" style="margin-top:-4px">La contraseña y la verificación en dos pasos están en <a href="#/seguridad">Seguridad</a>.</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary">${ic('check', 'sm')}Guardar cambios</button>
         <button type="button" class="btn danger" id="logout2">${ic('log-out', 'sm')}Cerrar sesión</button></div>
       </form>
@@ -748,9 +807,8 @@ async function renderSettings(el) {
     ev.preventDefault();
     const f = new FormData(ev.target);
     try {
-      me = await api('/me', { method: 'PUT', body: { name: f.get('name'), newPassword: f.get('newPassword') || undefined } });
+      me = await api('/me', { method: 'PUT', body: { name: f.get('name') } });
       setUser();
-      ev.target.newPassword.value = '';
       toast('Perfil guardado');
     } catch (e) { toast(e.message, true); }
   };
@@ -853,11 +911,552 @@ async function renderDownload(el) {
   $('#dlInstall2')?.addEventListener('click', doInstall);
 }
 
+// ---------- Ingresos ----------
+const SOURCES = {
+  nomina: { name: 'Nómina', icon: 'briefcase', color: '#16a34a' },
+  freelance: { name: 'Trabajo extra', icon: 'laptop', color: '#2563eb' },
+  ventas: { name: 'Ventas', icon: 'store', color: '#f97316' },
+  inversiones: { name: 'Inversiones', icon: 'trending-up', color: '#9333ea' },
+  alquiler: { name: 'Alquiler', icon: 'house', color: '#0891b2' },
+  regalos: { name: 'Regalos', icon: 'gift', color: '#db2777' },
+  devoluciones: { name: 'Devoluciones', icon: 'receipt', color: '#ca8a04' },
+  otros: { name: 'Otros', icon: 'banknote', color: '#64748b' },
+};
+const srcOf = (k) => ({ id: k, ...(SOURCES[k] || SOURCES.otros) });
+const r2 = (n) => Math.round(n * 100) / 100;
+
+function incomeForm(inc = {}) {
+  const sel = inc.source || 'nomina';
+  openModal({
+    title: inc.id ? 'Editar ingreso' : 'Nuevo ingreso',
+    icon: 'hand-coins',
+    html: `
+      <label class="field">Importe<div class="input-money"><input name="amount" type="number" inputmode="decimal" step="0.01" min="0.01" required value="${inc.amount ?? ''}" placeholder="0,00"><span>€</span></div></label>
+      <label class="field">Concepto<input name="name" required maxlength="100" value="${esc(inc.name || '')}" placeholder="Ej: Nómina de noviembre"></label>
+      <div class="mini-label">Origen</div><input type="hidden" name="source" value="${sel}">
+      <div class="cat-pick" id="srcPick">${Object.keys(SOURCES).map((k) => { const s = srcOf(k); return `<button type="button" data-id="${k}" class="${k === sel ? 'on' : ''}" style="--c:${s.color}">${ic(s.icon)}${s.name}</button>`; }).join('')}</div>
+      <label class="field">Fecha<input name="date" type="date" required value="${inc.date || ymd(todayD())}"></label>
+      <label class="field">Notas<textarea name="notes" maxlength="500" placeholder="Opcional">${esc(inc.notes || '')}</textarea></label>
+      ${inc.id ? `<button type="button" class="btn danger sm" id="delInc">${ic('trash-2', 'sm')}Eliminar ingreso</button>` : ''}`,
+    onSubmit: async (d) => {
+      d.amount = Number(d.amount);
+      if (inc.id) await api('/incomes/' + inc.id, { method: 'PUT', body: d });
+      else await api('/incomes', { method: 'POST', body: d });
+      toast(inc.id ? 'Ingreso actualizado' : 'Ingreso añadido');
+      route();
+    },
+  });
+  const box = $('#srcPick');
+  box.onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    $$('button', box).forEach((x) => x.classList.toggle('on', x === b));
+    $('#modalBody input[name=source]').value = b.dataset.id;
+  };
+  $('#delInc')?.addEventListener('click', () => deleteIncome(inc));
+}
+function deleteIncome(i) {
+  confirmModal('Eliminar ingreso', `¿Eliminar <b>${esc(i.name)}</b> (${eur(i.amount)})? No se puede deshacer.`, async () => {
+    await api('/incomes/' + i.id, { method: 'DELETE' });
+    toast('Ingreso eliminado');
+    route();
+  });
+}
+
+function exportModal() {
+  const t = todayD();
+  openModal({
+    title: 'Exportar a Excel',
+    icon: 'file-spreadsheet',
+    okText: 'Descargar Excel',
+    html: `
+      <p class="set-desc">Se descargará un archivo <b>.xlsx</b> con 5 hojas: resumen mensual, ingresos, gastos, movimientos de ahorro y huchas, con totales y filtros.</p>
+      <div class="mini-label">Periodo</div>
+      <div class="seg full" id="expSeg"><button type="button" data-r="month" class="on">Este mes</button><button type="button" data-r="year">Este año</button><button type="button" data-r="all">Todo</button><button type="button" data-r="custom">Elegir</button></div>
+      <input type="hidden" name="range" value="month">
+      <div class="row hidden" id="expCustom"><label class="field">Desde<input type="date" name="from" value="${ymd(new Date(t.getFullYear(), 0, 1))}"></label><label class="field">Hasta<input type="date" name="to" value="${ymd(t)}"></label></div>`,
+    onSubmit: async (d) => {
+      let from = '', to = '';
+      if (d.range === 'month') { from = ymd(new Date(t.getFullYear(), t.getMonth(), 1)); to = ymd(new Date(t.getFullYear(), t.getMonth() + 1, 0)); }
+      if (d.range === 'year') { from = `${t.getFullYear()}-01-01`; to = `${t.getFullYear()}-12-31`; }
+      if (d.range === 'custom') { from = d.from; to = d.to; if (!from || !to || from > to) throw new Error('Revisa las fechas'); }
+      await download(`/export.xlsx${from ? `?from=${from}&to=${to}` : ''}`, 'agenda-gastos.xlsx');
+      toast('Excel descargado');
+    },
+  });
+  $('#expSeg').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    $$('#expSeg button').forEach((x) => x.classList.toggle('on', x === b));
+    $('#modalBody input[name=range]').value = b.dataset.r;
+    $('#expCustom').classList.toggle('hidden', b.dataset.r !== 'custom');
+  };
+}
+
+const incState = { month: monthKey(todayD()), source: '', q: '', sort: 'date', dir: -1 };
+async function renderIncomes(el) {
+  const mDate = parse(incState.month + '-01');
+  const start = new Date(mDate.getFullYear(), mDate.getMonth() - 5, 1);
+  const end = new Date(mDate.getFullYear(), mDate.getMonth() + 1, 0);
+  const [incs, exps] = await Promise.all([api(`/incomes?from=${ymd(start)}&to=${ymd(end)}`), api(`/expenses?from=${ymd(start)}&to=${ymd(end)}`)]);
+  const mk = incState.month;
+  const prevMk = monthKey(new Date(mDate.getFullYear(), mDate.getMonth() - 1, 1));
+  const monthInc = incs.filter((i) => i.date.startsWith(mk));
+  const totalInc = sum(monthInc);
+  const totalExp = sum(exps.filter((e) => e.date.startsWith(mk)));
+  const balance = r2(totalInc - totalExp);
+  const rate = totalInc ? (balance / totalInc) * 100 : null;
+  const months = [...Array(6)].map((_, i) => new Date(mDate.getFullYear(), mDate.getMonth() - 5 + i, 1));
+  const bySrc = {};
+  for (const i of monthInc) bySrc[i.source] = (bySrc[i.source] || 0) + i.amount;
+  const srcItems = Object.entries(bySrc).map(([k, total]) => ({ ...srcOf(k), total })).sort((a, b) => b.total - a.total);
+
+  el.innerHTML = `
+  <div class="toolbar">
+    <div class="month-nav"><button class="icon-btn" id="iPrev" title="Mes anterior">${ic('chevron-left')}</button><span class="lbl">${cap(monthName(mDate))}</span><button class="icon-btn" id="iNext" title="Mes siguiente">${ic('chevron-right')}</button></div>
+    <select id="iSrc"><option value="">Todos los orígenes</option>${Object.keys(SOURCES).map((k) => `<option value="${k}">${SOURCES[k].name}</option>`).join('')}</select>
+    <div class="input-icon grow">${ic('search')}<input type="search" id="iQ" placeholder="Buscar ingreso…" value="${esc(incState.q)}"></div>
+    <button class="btn" id="iXls">${ic('file-spreadsheet', 'sm')}Exportar a Excel</button>
+  </div>
+  <div class="grid g4 stats">
+    <div class="card stat"><div class="top"><span class="label">Ingresos</span><span class="ichip green">${ic('hand-coins')}</span></div>
+      <div><div class="value">${eur(totalInc)}</div><div class="sub">${trendHtml(pct(totalInc, sum(incs.filter((i) => i.date.startsWith(prevMk)))), ' vs. mes anterior', true) || 'En ' + monthName(mDate, false)}</div></div></div>
+    <div class="card stat"><div class="top"><span class="label">Gastos</span><span class="ichip red">${ic('receipt-text')}</span></div>
+      <div><div class="value">${eur(totalExp)}</div><div class="sub">En el mismo mes</div></div></div>
+    <div class="card stat"><div class="top"><span class="label">Balance</span><span class="ichip ${balance >= 0 ? 'green' : 'red'}">${ic('scale')}</span></div>
+      <div><div class="value" style="color:var(${balance >= 0 ? '--success' : '--danger'})">${balance >= 0 ? '+' : ''}${eur(balance)}</div><div class="sub">${balance >= 0 ? 'Te sobra dinero este mes' : 'Gastas más de lo que entra'}</div></div></div>
+    <div class="card stat"><div class="top"><span class="label">Tasa de ahorro</span><span class="ichip">${ic('piggy-bank')}</span></div>
+      <div><div class="value">${rate === null ? '—' : Math.round(rate) + '%'}</div><div class="sub">Del dinero que entra</div></div></div>
+  </div>
+  <div class="grid g3">
+    <div class="card span2"><div class="card-head"><h3>${ic('chart-column', 'sm')}Ingresos y gastos</h3><span class="badge">Últimos 6 meses</span></div><div class="chart-box"><canvas id="cIvE"></canvas></div></div>
+    <div class="card"><div class="card-head"><h3>${ic('chart-pie', 'sm')}Por origen</h3></div>
+      ${srcItems.length ? `<div class="donut-wrap"><canvas id="cSrc"></canvas><div class="donut-center"><div><b>${eurShort(totalInc)}</b><small>ingresos</small></div></div></div>${legendHtml(srcItems, totalInc)}` : emptyHtml('hand-coins', 'Sin ingresos este mes', '')}</div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h3>${ic('file-spreadsheet', 'sm')}Tabla de ingresos</h3><button class="btn sm primary" data-act="new-income">${ic('plus', 'sm')}Nuevo ingreso</button></div>
+    <div id="iTable"></div>
+  </div>`;
+  $('#iSrc').value = incState.source;
+
+  const paintTable = () => {
+    const q = incState.q.toLowerCase();
+    const rows = monthInc.filter((i) => (!incState.source || i.source === incState.source) && (!q || `${i.name} ${i.notes}`.toLowerCase().includes(q)));
+    const k = incState.sort;
+    rows.sort((a, b) => {
+      const va = k === 'source' ? srcOf(a.source).name : a[k];
+      const vb = k === 'source' ? srcOf(b.source).name : b[k];
+      return (va > vb ? 1 : va < vb ? -1 : 0) * incState.dir;
+    });
+    if (!rows.length) {
+      $('#iTable').innerHTML = emptyHtml('hand-coins', monthInc.length ? 'No hay resultados' : 'Aún no hay ingresos este mes', monthInc.length ? 'Prueba con otros filtros.' : 'Apunta tu nómina, ventas o cualquier dinero que recibas.', `<button class="btn primary sm" data-act="new-income">${ic('plus', 'sm')}Nuevo ingreso</button>`);
+      return;
+    }
+    const th = (key, label, cls = '') => `<th data-sort="${key}" class="${cls} ${incState.sort === key ? 'on' : ''}">${label}${ic(incState.sort === key ? (incState.dir > 0 ? 'arrow-up' : 'arrow-down') : 'arrow-up-down')}</th>`;
+    $('#iTable').innerHTML = `<div class="xl-wrap"><table class="xl">
+      <thead><tr>${th('date', 'Fecha')}${th('name', 'Concepto')}${th('source', 'Origen')}${th('amount', 'Importe', 'num')}<th>Notas</th><th></th></tr></thead>
+      <tbody>${rows.map((i) => `<tr data-id="${i.id}">
+        <td class="date">${fmtDate(i.date, { day: '2-digit', month: '2-digit', year: 'numeric' })}</td>
+        <td><b>${esc(i.name)}</b></td><td>${catTag(srcOf(i.source))}</td>
+        <td class="num income-amt">+${eur(i.amount)}</td><td class="muted">${esc(i.notes) || '—'}</td>
+        <td class="acts"><button class="icon-btn sm" data-edit="${i.id}" title="Editar">${ic('pencil', 'sm')}</button><button class="icon-btn sm danger" data-del="${i.id}" title="Eliminar">${ic('trash-2', 'sm')}</button></td></tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="3">Total · ${rows.length} ingreso${rows.length === 1 ? '' : 's'}</td><td class="num">${eur(sum(rows))}</td><td colspan="2"></td></tr></tfoot>
+    </table></div>`;
+  };
+  $('#iTable').onclick = (e) => {
+    const th = e.target.closest('th[data-sort]');
+    if (th) {
+      if (incState.sort === th.dataset.sort) incState.dir *= -1;
+      else { incState.sort = th.dataset.sort; incState.dir = ['date', 'amount'].includes(th.dataset.sort) ? -1 : 1; }
+      return paintTable();
+    }
+    const d = e.target.closest('[data-del]');
+    if (d) return deleteIncome(monthInc.find((x) => x.id === d.dataset.del));
+    const r = e.target.closest('tr[data-id]');
+    if (r) incomeForm(monthInc.find((x) => x.id === r.dataset.id));
+  };
+  const shift = (n) => { incState.month = monthKey(new Date(mDate.getFullYear(), mDate.getMonth() + n, 1)); route(); };
+  $('#iPrev').onclick = () => shift(-1);
+  $('#iNext').onclick = () => shift(1);
+  $('#iSrc').onchange = (e) => { incState.source = e.target.value; paintTable(); };
+  $('#iQ').oninput = (e) => { incState.q = e.target.value; paintTable(); };
+  $('#iXls').onclick = exportModal;
+  paintTable();
+
+  chart($('#cIvE'), {
+    type: 'bar',
+    data: {
+      labels: months.map((d) => cap(d.toLocaleDateString('es-ES', { month: 'short' }).replace('.', ''))),
+      datasets: [
+        { label: 'Ingresos', data: months.map((d) => sum(incs.filter((i) => i.date.startsWith(monthKey(d))))), backgroundColor: cssVar('--success'), borderRadius: 6, maxBarThickness: 30 },
+        { label: 'Gastos', data: months.map((d) => sum(exps.filter((e) => e.date.startsWith(monthKey(d))))), backgroundColor: cssVar('--danger'), borderRadius: 6, maxBarThickness: 30 },
+      ],
+    },
+    options: { ...barOpts, plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, useBorderRadius: true, borderRadius: 3 } }, tooltip: { displayColors: true, callbacks: { label: (c) => ` ${c.dataset.label}: ${eur(c.parsed.y)}` } } } },
+  });
+  if (srcItems.length) donut($('#cSrc'), srcItems);
+}
+
+// ---------- Ahorros ----------
+const SAVING_COLORS = ['#16a34a', '#0d9488', '#0891b2', '#2563eb', '#4f46e5', '#7c3aed', '#db2777', '#ef4444', '#f97316', '#ca8a04', '#64748b'];
+const SAVING_ICONS = ['piggy-bank', 'plane', 'house', 'car', 'graduation-cap', 'heart', 'gift', 'shield-check', 'laptop', 'smartphone', 'baby', 'dog', 'bike', 'umbrella', 'landmark', 'coins', 'target', 'trophy', 'sparkles', 'gem'];
+function savingForm(s = {}) {
+  let color = s.color || '#16a34a';
+  let icon = s.icon || 'piggy-bank';
+  openModal({
+    title: s.id ? 'Editar hucha' : 'Nueva hucha',
+    icon: 'piggy-bank',
+    html: `
+      <div class="cat-preview" id="savPrev"></div>
+      <input type="hidden" name="color"><input type="hidden" name="icon">
+      <label class="field">Nombre<input name="name" required maxlength="60" value="${esc(s.name || '')}" placeholder="Ej: Vacaciones, Fondo de emergencia…"></label>
+      <div class="row">
+        <label class="field">Objetivo (opcional)<div class="input-money"><input name="goal" type="number" inputmode="decimal" step="0.01" min="0" value="${s.goal ?? ''}" placeholder="Sin objetivo"><span>€</span></div></label>
+        ${s.id ? '' : `<label class="field">Ya tengo ahorrado<div class="input-money"><input name="initial" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0,00"><span>€</span></div></label>`}
+      </div>
+      <div class="mini-label">Color</div>
+      <div class="color-picker" id="sColPick">${SAVING_COLORS.map((c) => `<button type="button" data-c="${c}" style="--c:${c}" aria-label="${c}"></button>`).join('')}</div>
+      <div class="mini-label">Icono</div>
+      <div class="icon-picker" id="sIcPick">${SAVING_ICONS.map((n) => `<button type="button" data-n="${n}" title="${n}">${ic(n)}</button>`).join('')}</div>`,
+    onSubmit: async (d) => {
+      if (d.goal === '' || Number(d.goal) === 0) d.goal = null;
+      if (s.id) await api('/savings/' + s.id, { method: 'PUT', body: d });
+      else await api('/savings', { method: 'POST', body: d });
+      toast('Hucha guardada');
+      route();
+    },
+  });
+  const root = $('#modalBody');
+  const paint = () => {
+    $('input[name=color]', root).value = color;
+    $('input[name=icon]', root).value = icon;
+    $('#savPrev').innerHTML = catIc({ color, icon }) + `<div><b>${esc($('input[name=name]', root).value || 'Nueva hucha')}</b><div class="muted" style="font-size:13px">Así se verá tu hucha</div></div>`;
+    $$('#sColPick button').forEach((b) => b.classList.toggle('on', b.dataset.c === color));
+    $$('#sIcPick button').forEach((b) => { b.classList.toggle('on', b.dataset.n === icon); b.style.setProperty('--c', color); });
+  };
+  $('#sColPick').onclick = (e) => { const b = e.target.closest('button'); if (b) { color = b.dataset.c; paint(); } };
+  $('#sIcPick').onclick = (e) => { const b = e.target.closest('button'); if (b) { icon = b.dataset.n; paint(); } };
+  $('input[name=name]', root).oninput = paint;
+  paint();
+}
+function moveForm(s, type = 'in') {
+  openModal({
+    title: s.name,
+    icon: s.icon,
+    okText: 'Guardar movimiento',
+    html: `
+      <div class="seg full" id="mvSeg"><button type="button" data-t="in" class="${type === 'in' ? 'on' : ''}">${ic('arrow-down-left', 'sm')}Aportar</button><button type="button" data-t="out" class="${type === 'out' ? 'on' : ''}">${ic('arrow-up-right', 'sm')}Retirar</button></div>
+      <input type="hidden" name="type" value="${type}"><input type="hidden" name="savingId" value="${s.id}">
+      <p class="muted" style="margin:-4px 0 14px;font-size:13.5px">Saldo actual: <b style="color:var(--text)">${eur(s.balance)}</b></p>
+      <label class="field">Importe<div class="input-money"><input name="amount" type="number" inputmode="decimal" step="0.01" min="0.01" required placeholder="0,00"><span>€</span></div></label>
+      <div class="row">
+        <label class="field">Fecha<input name="date" type="date" required value="${ymd(todayD())}"></label>
+        <label class="field">Nota<input name="note" maxlength="200" placeholder="Opcional"></label>
+      </div>`,
+    onSubmit: async (d) => {
+      d.amount = Number(d.amount);
+      await api('/saving-moves', { method: 'POST', body: d });
+      toast(d.type === 'in' ? 'Aportación guardada' : 'Retirada guardada');
+      route();
+    },
+  });
+  $('#mvSeg').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    $$('#mvSeg button').forEach((x) => x.classList.toggle('on', x === b));
+    $('#modalBody input[name=type]').value = b.dataset.t;
+  };
+}
+
+async function renderSavings(el) {
+  const [savs, moves] = await Promise.all([api('/savings'), api('/saving-moves')]);
+  const total = r2(savs.reduce((a, s) => a + s.balance, 0));
+  const month = r2(savs.reduce((a, s) => a + s.month, 0));
+  const goals = savs.filter((s) => s.goal);
+  const goalSum = goals.reduce((a, s) => a + s.goal, 0);
+  const goalHave = goals.reduce((a, s) => a + Math.min(s.balance, s.goal), 0);
+  const t = todayD();
+  const months = [...Array(12)].map((_, i) => new Date(t.getFullYear(), t.getMonth() - 11 + i, 1));
+  const cum = months.map((m) => { const endD = ymd(new Date(m.getFullYear(), m.getMonth() + 1, 0)); return r2(moves.filter((x) => x.date <= endD).reduce((a, x) => a + (x.type === 'in' ? x.amount : -x.amount), 0)); });
+  const sv = (id) => savs.find((s) => s.id === id);
+
+  el.innerHTML = `
+  <div class="grid g3">
+    <div class="hero green span2">
+      <div>
+        <div class="label">${ic('piggy-bank', 'sm')}Total ahorrado</div>
+        <div class="amount">${eur(total)}</div>
+        <div class="pill">${ic(month >= 0 ? 'trending-up' : 'trending-down', 'xs')}${month >= 0 ? '+' : '−'}${eur(Math.abs(month))} este mes</div>
+      </div>
+      <div class="foot">
+        <div><b>${savs.length}</b>hucha${savs.length === 1 ? '' : 's'}</div>
+        <div><b>${goals.length ? eur(goalSum) : '—'}</b>en objetivos</div>
+        <div style="min-width:180px;flex:1;max-width:260px"><b>${goalSum ? Math.round((goalHave / goalSum) * 100) : 0}%</b>de tus objetivos conseguido
+          <div class="progress thin" style="margin-top:7px"><div style="width:${goalSum ? (goalHave / goalSum) * 100 : 0}%"></div></div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>${ic('history', 'sm')}Últimos movimientos</h3></div>
+      <div class="list" id="mvList">${moves.slice(0, 5).map((m) => { const s = sv(m.savingId); return `<div class="li">
+        <span class="ev-ic ${m.type === 'in' ? 'good' : 'bad'}">${ic(m.type === 'in' ? 'arrow-down-left' : 'arrow-up-right', 'sm')}</span>
+        <div class="main"><b>${esc(s?.name || '—')}</b><small>${fmtDate(m.date)}${m.note ? `<span class="dot-sep"></span>${esc(m.note)}` : ''}</small></div>
+        <div class="amt ${m.type === 'in' ? 'move-in' : 'move-out'}">${m.type === 'in' ? '+' : '−'}${eur(m.amount)}</div>
+        <button class="icon-btn sm danger" data-delmv="${m.id}" title="Borrar movimiento">${ic('x', 'sm')}</button></div>`; }).join('') || emptyHtml('history', 'Sin movimientos', 'Crea una hucha y haz tu primera aportación.')}</div>
+    </div>
+  </div>
+  <div class="toolbar" style="justify-content:space-between">
+    <div class="muted" style="font-size:14px">Separa tu dinero en huchas, cada una con su objetivo.</div>
+    <button class="btn primary" data-act="new-saving">${ic('plus', 'sm')}Nueva hucha</button>
+  </div>
+  <div class="grid g3" id="savs">
+    ${savs.map((s) => {
+      const p = s.goal ? Math.min(100, (s.balance / s.goal) * 100) : 0;
+      return `<div class="card saving-card">
+        <div class="top">${catIc(s)}<div style="flex:1;min-width:0"><b>${esc(s.name)}</b><small>${s.moves} movimiento${s.moves === 1 ? '' : 's'}</small></div>
+          <button class="icon-btn sm" data-edit="${s.id}" title="Editar">${ic('pencil', 'sm')}</button><button class="icon-btn sm danger" data-del="${s.id}" title="Eliminar">${ic('trash-2', 'sm')}</button></div>
+        <div>
+          <div class="bal">${eur(s.balance)}</div>
+          ${s.goal ? `<div class="progress" style="margin-top:10px"><div style="width:${p}%;background:${safeColor(s.color)}"></div></div>
+            <div class="goal-line"><span>Objetivo: ${eur(s.goal)}</span><b>${Math.round(p)}%</b></div>` : '<div class="goal-line"><span>Sin objetivo</span></div>'}
+        </div>
+        <div class="meta" style="display:flex;gap:6px;flex-wrap:wrap">
+          ${s.goal && s.balance >= s.goal ? `<span class="badge ok">${ic('trophy')}¡Objetivo conseguido!</span>` : s.goal ? `<span class="badge">${ic('target')}Faltan ${eur(s.goal - s.balance)}</span>` : ''}
+          ${s.month ? `<span class="badge ${s.month > 0 ? 'ok' : 'warn'}">${s.month > 0 ? '+' : '−'}${eur(Math.abs(s.month))} este mes</span>` : ''}
+        </div>
+        <div class="btns"><button class="btn sm primary" data-in="${s.id}">${ic('arrow-down-left', 'sm')}Aportar</button><button class="btn sm" data-out="${s.id}" ${s.balance > 0 ? '' : 'disabled'}>${ic('arrow-up-right', 'sm')}Retirar</button></div>
+      </div>`;
+    }).join('') || `<div class="card span2">${emptyHtml('piggy-bank', 'Aún no tienes huchas', 'Crea una para tus vacaciones, un fondo de emergencia o lo que quieras conseguir.', `<button class="btn primary sm" data-act="new-saving">${ic('plus', 'sm')}Crear mi primera hucha</button>`)}</div>`}
+  </div>
+  ${moves.length ? `<div class="card"><div class="card-head"><h3>${ic('trending-up', 'sm')}Evolución del ahorro</h3><span class="badge">12 meses</span></div><div class="chart-box sm"><canvas id="cSav"></canvas></div></div>` : ''}`;
+
+  $('#savs').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const s = sv(b.dataset.edit || b.dataset.del || b.dataset.in || b.dataset.out);
+    if (!s) return;
+    if (b.dataset.edit) savingForm(s);
+    if (b.dataset.in) moveForm(s, 'in');
+    if (b.dataset.out) moveForm(s, 'out');
+    if (b.dataset.del) confirmModal('Eliminar hucha', `¿Eliminar <b>${esc(s.name)}</b> y sus ${s.moves} movimientos? No se puede deshacer.`, async () => {
+      await api('/savings/' + s.id, { method: 'DELETE' });
+      toast('Hucha eliminada');
+      route();
+    });
+  };
+  $('#mvList').onclick = async (e) => {
+    const b = e.target.closest('[data-delmv]');
+    if (!b) return;
+    confirmModal('Borrar movimiento', '¿Borrar este movimiento? El saldo de la hucha se recalculará.', async () => {
+      await api('/saving-moves/' + b.dataset.delmv, { method: 'DELETE' });
+      toast('Movimiento borrado');
+      route();
+    });
+  };
+  if (moves.length) {
+    const ctx = $('#cSav').getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 0, 210);
+    grad.addColorStop(0, cssVar('--success') + '55');
+    grad.addColorStop(1, cssVar('--success') + '00');
+    chart($('#cSav'), {
+      type: 'line',
+      data: { labels: months.map((d) => cap(d.toLocaleDateString('es-ES', { month: 'short' }).replace('.', ''))), datasets: [{ data: cum, borderColor: cssVar('--success'), backgroundColor: grad, fill: true, tension: 0.35, pointRadius: 3, borderWidth: 2.5 }] },
+      options: barOpts,
+    });
+  }
+}
+
+// ---------- Seguridad ----------
+function showRecoveryCodes(codes) {
+  const txt = `Agenda de Gastos - Códigos de recuperación\nCuenta: ${me.email}\nGenerados: ${new Date().toLocaleString('es-ES')}\n\n${codes.join('\n')}\n\nCada código sirve una sola vez.`;
+  openModal({
+    title: 'Guarda tus códigos de recuperación',
+    icon: 'key-round',
+    okText: 'Ya los he guardado',
+    html: `
+      <div class="notice warn" style="margin-bottom:14px">${ic('triangle-alert', 'sm')}<span>Si pierdes el móvil, estos códigos son la <b>única forma</b> de entrar. Cada uno sirve una vez. Guárdalos en un lugar seguro: no los volverás a ver.</span></div>
+      <div class="codes-grid">${codes.map((c) => `<code>${esc(c)}</code>`).join('')}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn sm" id="rcCopy">${ic('copy', 'sm')}Copiar</button><button type="button" class="btn sm" id="rcDl">${ic('download', 'sm')}Descargar .txt</button></div>`,
+    onSubmit: async () => route(),
+  });
+  $('#modalCancel').classList.add('hidden');
+  $('#rcCopy').onclick = () => copyText(codes.join('\n'));
+  $('#rcDl').onclick = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain;charset=utf-8' }));
+    a.download = 'codigos-recuperacion-agenda-gastos.txt';
+    a.click();
+  };
+}
+async function enable2fa() {
+  let r;
+  try { r = await api('/2fa/setup', { method: 'POST' }); } catch (e) { return toast(e.message, true); }
+  openModal({
+    title: 'Activar verificación en dos pasos',
+    icon: 'shield-check',
+    okText: 'Activar',
+    html: `
+      <ol class="steps">
+        <li>Instala una app autenticadora en tu móvil: <b>Google Authenticator</b>, <b>Microsoft Authenticator</b> o <b>Authy</b>.</li>
+        <li>En la app, pulsa «+» y escanea este código QR.</li>
+        <li>Escribe aquí el código de 6 cifras que te muestra la app.</li>
+      </ol>
+      <div class="qr-box" style="margin-top:16px"><img src="${r.qr}" alt="Código QR para la app autenticadora">
+        <div><small class="muted">¿No puedes escanearlo? Escribe esta clave en la app:</small><div class="secret">${esc(r.secret)}</div>
+        <button type="button" class="btn sm" id="cpSecret">${ic('copy', 'sm')}Copiar clave</button></div></div>
+      <label class="field">Código de la app<input name="code" class="code-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required placeholder="000000"></label>`,
+    onSubmit: async (d) => {
+      const res = await api('/2fa/enable', { method: 'POST', body: { code: d.code } });
+      me = res.user;
+      setUser();
+      toast('Verificación en dos pasos activada');
+      setTimeout(() => showRecoveryCodes(res.recoveryCodes), 80);
+    },
+  });
+  $('#cpSecret').onclick = () => copyText(r.secret.replace(/\s/g, ''));
+}
+function disable2fa() {
+  openModal({
+    title: 'Desactivar verificación en dos pasos',
+    icon: 'shield-alert',
+    danger: true,
+    okText: 'Desactivar',
+    html: `
+      <div class="notice warn" style="margin-bottom:16px">${ic('triangle-alert', 'sm')}<span>Tu cuenta quedará protegida solo con la contraseña. No lo recomendamos.</span></div>
+      <label class="field">Contraseña actual<div class="input-icon pw-wrap">${ic('lock')}<input name="password" type="password" required autocomplete="current-password"><button type="button" class="pw-eye" tabindex="-1">${ic('eye')}</button></div></label>
+      <label class="field">Código de tu app<input name="code" class="code-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required placeholder="000000"></label>`,
+    onSubmit: async (d) => {
+      me = await api('/2fa/disable', { method: 'POST', body: d });
+      setUser();
+      toast('Verificación en dos pasos desactivada');
+      route();
+    },
+  });
+}
+function regenCodes() {
+  openModal({
+    title: 'Nuevos códigos de recuperación',
+    icon: 'key-round',
+    okText: 'Generar',
+    html: `<p class="set-desc">Los códigos anteriores dejarán de funcionar. Confirma con el código de tu app.</p>
+      <label class="field">Código de tu app<input name="code" class="code-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required placeholder="000000"></label>`,
+    onSubmit: async (d) => {
+      const res = await api('/2fa/recovery', { method: 'POST', body: d });
+      me = res.user;
+      setTimeout(() => showRecoveryCodes(res.recoveryCodes), 80);
+    },
+  });
+}
+const EV_ICON = {
+  login: ['log-in', ''], logout: ['log-out', ''], register: ['badge-check', 'good'], login_failed: ['shield-alert', 'bad'], login_2fa_failed: ['shield-alert', 'bad'],
+  locked: ['lock-keyhole', 'bad'], login_recovery: ['key-round', ''], password_changed: ['key-round', 'good'], twofa_enabled: ['shield-check', 'good'],
+  twofa_disabled: ['shield-alert', 'bad'], recovery_regenerated: ['key-round', ''], session_revoked: ['circle-x', ''],
+};
+const devIcon = (d) => (/Android|iPhone/.test(d) ? 'smartphone' : /escritorio/.test(d) ? 'monitor' : 'laptop');
+
+async function renderSecurity(el) {
+  const [user, sessions, log] = await Promise.all([api('/me'), api('/sessions'), api('/security-log')]);
+  me = user;
+  setUser();
+  const pwDays = Math.floor((Date.now() - new Date(me.passwordChangedAt).getTime()) / 86400000);
+  const checks = [
+    [me.twoFactor, 'Verificación en dos pasos activada', 50],
+    [me.twoFactor && me.recoveryLeft >= 3, 'Códigos de recuperación disponibles', 10],
+    [sessions.length <= 3, 'Pocas sesiones abiertas', 10],
+    [pwDays < 365, 'Contraseña renovada en el último año', 10],
+    [!log.slice(0, 15).some((e) => e.type === 'locked' || e.type === 'login_2fa_failed'), 'Sin intentos sospechosos recientes', 10],
+    [true, 'Conexión cifrada y sesión protegida', 10],
+  ];
+  const score = checks.reduce((a, [ok, , w]) => a + (ok ? w : 0), 0);
+  const lvl = score >= 90 ? ['Excelente', '--success'] : score >= 60 ? ['Buena', '--primary'] : ['Mejorable', '--warn'];
+
+  el.innerHTML = `
+  <div class="card" style="margin-bottom:18px">
+    <div class="level">
+      <div class="ring" style="--p:${score};--lc:var(${lvl[1]})"><div>${score}</div></div>
+      <div><h2>Seguridad ${lvl[0].toLowerCase()}</h2><div class="muted">${me.twoFactor ? 'Tu cuenta está muy bien protegida.' : 'Activa la verificación en dos pasos para proteger tu cuenta aunque alguien sepa tu contraseña.'}</div></div>
+    </div>
+    <div class="checklist">${checks.map(([ok, txt]) => `<div><span class="${ok ? 'ok' : 'no'}">${ic(ok ? 'circle-check' : 'circle-alert', 'sm')}</span>${txt}</div>`).join('')}</div>
+  </div>
+
+  <div class="grid g2">
+    <div class="card">
+      <div class="card-head"><h3>${ic('fingerprint', 'sm')}Verificación en dos pasos</h3>${me.twoFactor ? `<span class="badge ok">${ic('circle-check')}Activada</span>` : '<span class="badge warn">Desactivada</span>'}</div>
+      ${me.twoFactor ? `
+        <p class="set-desc">Al entrar te pedimos la contraseña <b>y</b> un código de tu app autenticadora, que cambia cada 30 segundos.</p>
+        <div class="notice ok" style="margin-bottom:16px">${ic('key-round', 'sm')}<span>Te quedan <b>${me.recoveryLeft}</b> código${me.recoveryLeft === 1 ? '' : 's'} de recuperación por si pierdes el móvil.${me.recoveryLeft < 3 ? ' Genera nuevos pronto.' : ''}</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="tfaCodes">${ic('key-round', 'sm')}Nuevos códigos de recuperación</button><button class="btn danger" id="tfaOff">${ic('shield-alert', 'sm')}Desactivar</button></div>`
+      : `
+        <p class="set-desc">Añade una segunda llave a tu cuenta: además de la contraseña, hará falta un código que solo genera tu móvil. Aunque alguien robe tu contraseña, no podrá entrar.</p>
+        <ol class="steps" style="margin-bottom:18px"><li>Instala Google Authenticator, Microsoft Authenticator o Authy.</li><li>Escanea el código QR que te mostraremos.</li><li>Guarda los códigos de recuperación.</li></ol>
+        <button class="btn primary" id="tfaOn">${ic('shield-check', 'sm')}Activar verificación en dos pasos</button>`}
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>${ic('key-round', 'sm')}Contraseña</h3><span class="badge">Cambiada ${ago(me.passwordChangedAt)}</span></div>
+      <form id="pwForm">
+        <label class="field">Contraseña actual<div class="input-icon pw-wrap">${ic('lock')}<input name="currentPassword" type="password" required autocomplete="current-password"><button type="button" class="pw-eye" tabindex="-1">${ic('eye')}</button></div></label>
+        <label class="field">Nueva contraseña<div class="input-icon pw-wrap">${ic('lock')}<input name="newPassword" type="password" required autocomplete="new-password" placeholder="8+ caracteres, letras y números"><button type="button" class="pw-eye" tabindex="-1">${ic('eye')}</button></div></label>
+        <div class="pw-meter" id="pwMeter"></div>
+        <label class="field">Repite la nueva contraseña<div class="input-icon">${ic('lock')}<input name="confirm" type="password" required autocomplete="new-password"></div></label>
+        ${me.twoFactor ? '<label class="field">Código de tu app<input name="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required placeholder="000000"></label>' : ''}
+        <div class="error" id="pwError"></div>
+        <button class="btn primary">${ic('check', 'sm')}Cambiar contraseña</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="grid g2">
+    <div class="card">
+      <div class="card-head"><h3>${ic('monitor', 'sm')}Sesiones abiertas</h3>${sessions.length > 1 ? `<button class="btn sm danger" id="revokeAll">${ic('log-out', 'sm')}Cerrar las demás</button>` : ''}</div>
+      <p class="set-desc">Dispositivos donde tu cuenta está abierta ahora mismo.</p>
+      <div class="list" id="sessList">${sessions.map((s) => `<div class="li">
+        <span class="ev-ic ${s.current ? 'good' : ''}">${ic(devIcon(s.device), 'sm')}</span>
+        <div class="main"><b>${esc(s.device)}</b><small>${s.current ? '<span class="badge ok" style="padding:1px 8px">Este dispositivo</span>' : `Activa ${ago(s.lastSeen)}`}<span class="dot-sep"></span>IP ${esc(s.ip || '—')}</small></div>
+        ${s.current ? '' : `<button class="btn sm" data-revoke="${s.id}">Cerrar</button>`}</div>`).join('')}</div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>${ic('history', 'sm')}Actividad reciente</h3></div>
+      <p class="set-desc">Te avisamos por correo de los accesos desde dispositivos nuevos.</p>
+      <div class="list">${log.slice(0, 12).map((e) => { const [i, cls] = EV_ICON[e.type] || ['activity', '']; return `<div class="li">
+        <span class="ev-ic ${cls}">${ic(i, 'sm')}</span>
+        <div class="main"><b>${esc(e.text)}</b><small>${esc(e.device)}<span class="dot-sep"></span>${ago(e.at)}</small></div></div>`; }).join('') || emptyHtml('history', 'Sin actividad', '')}</div>
+    </div>
+  </div>`;
+
+  $('#tfaOn')?.addEventListener('click', enable2fa);
+  $('#tfaOff')?.addEventListener('click', disable2fa);
+  $('#tfaCodes')?.addEventListener('click', regenCodes);
+  const pwf = $('#pwForm');
+  pwf.newPassword.oninput = () => paintMeter($('#pwMeter'), pwf.newPassword.value);
+  pwf.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const d = Object.fromEntries(new FormData(pwf));
+    $('#pwError').textContent = '';
+    if (d.newPassword !== d.confirm) { $('#pwError').textContent = 'Las contraseñas nuevas no coinciden'; return; }
+    try {
+      me = await api('/me/password', { method: 'POST', body: d });
+      toast('Contraseña cambiada. Se han cerrado tus otras sesiones.');
+      route();
+    } catch (e) { $('#pwError').textContent = e.message; }
+  };
+  $('#revokeAll')?.addEventListener('click', async () => {
+    try { await api('/sessions/revoke-others', { method: 'POST' }); toast('Se han cerrado las demás sesiones'); route(); } catch (e) { toast(e.message, true); }
+  });
+  $('#sessList').onclick = async (e) => {
+    const b = e.target.closest('[data-revoke]');
+    if (!b) return;
+    try { await api('/sessions/' + b.dataset.revoke, { method: 'DELETE' }); toast('Sesión cerrada'); route(); } catch (err) { toast(err.message, true); }
+  };
+}
+
 // ---------- Menú «Más» (móvil) ----------
 function openMore() {
   const items = [
     ['calendario', 'calendar-days', 'Calendario'],
+    ['mensuales', 'repeat', 'Gastos mensuales'],
+    ['ahorros', 'piggy-bank', 'Ahorros'],
     ['semanal', 'calendar-range', 'Resumen semanal'],
+    ['seguridad', 'shield-check', 'Seguridad'],
     ['ajustes', 'settings', 'Ajustes'],
     ...(IS_ELECTRON ? [] : [['descargar', 'download', 'Descargar app']]),
   ];
@@ -872,28 +1471,36 @@ function openMore() {
 }
 
 // ---------- Router ----------
+const addExpense = () => expenseForm({}, location.hash.includes('calendario') ? { date: state.calSel } : {});
 const VIEWS = {
   dashboard: ['Panel', () => `Hola, ${esc(me.name.split(' ')[0])} · ${todayD().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}`, renderDashboard],
   gastos: ['Gastos', () => 'Todo lo que has apuntado, día a día', renderExpenses],
+  ingresos: ['Ingresos', () => 'Lo que has cobrado, en una tabla que puedes llevar a Excel', renderIncomes, ['Nuevo ingreso', () => incomeForm()]],
   calendario: ['Calendario', () => 'Tus gastos y cobros en el mes', renderCalendar],
-  mensuales: ['Gastos mensuales', () => 'Cobros fijos con aviso por correo', renderRecurring],
+  mensuales: ['Gastos mensuales', () => 'Cobros fijos con aviso por correo', renderRecurring, ['Nuevo mensual', () => recurringForm()]],
+  ahorros: ['Ahorros', () => 'Cuánto dinero tienes guardado y para qué', renderSavings, ['Nueva hucha', () => savingForm()]],
   semanal: ['Resumen semanal', () => 'Cómo ha ido tu semana', renderWeekly],
+  seguridad: ['Seguridad', () => 'Verificación en dos pasos, contraseña y sesiones', renderSecurity],
   ajustes: ['Ajustes', () => 'Perfil, avisos, apariencia y categorías', renderSettings],
   descargar: ['Descargar app', () => 'Úsala en el móvil y en el ordenador', renderDownload],
 };
+let currentAdd = addExpense;
 async function route() {
   if (!me) return;
   let [v, query] = location.hash.replace('#/', '').split('?');
   if (!VIEWS[v]) v = 'dashboard';
+  const [title, subtitle, render, add] = VIEWS[v];
+  currentAdd = add ? add[1] : addExpense;
+  $('#btnAddTxt').textContent = add ? add[0] : 'Nuevo gasto';
   if (query?.includes('nuevo=1')) {
     history.replaceState(null, '', '#/' + v);
-    setTimeout(() => expenseForm(), 0);
+    setTimeout(() => currentAdd(), 0);
   }
-  const [title, subtitle, render] = VIEWS[v];
   $('#viewTitle').textContent = title;
   $('#viewSubtitle').innerHTML = subtitle();
   document.title = `${title} · Agenda de Gastos`;
-  $$('#nav a, #tabbar [data-view]').forEach((a) => a.classList.toggle('active', a.dataset.view === v || (a.dataset.view === 'more' && ['calendario', 'semanal', 'ajustes', 'descargar'].includes(v))));
+  const inMore = ['calendario', 'mensuales', 'ahorros', 'semanal', 'seguridad', 'ajustes', 'descargar'].includes(v);
+  $$('#nav a, #tabbar [data-view]').forEach((a) => a.classList.toggle('active', a.dataset.view === v || (a.dataset.view === 'more' && inMore)));
   charts.forEach((c) => c.destroy());
   charts = [];
   const view = $('#view');
@@ -902,7 +1509,8 @@ async function route() {
     await render(view);
     hydrate(view);
   } catch (e) {
-    view.innerHTML = `<div class="card">${emptyHtml('triangle-alert', 'No se pudo cargar', esc(e.message), '<button class="btn sm" onclick="route()">Reintentar</button>')}</div>`;
+    if (!me) return;
+    view.innerHTML = `<div class="card">${emptyHtml('triangle-alert', 'No se pudo cargar', esc(e.message), '<button class="btn sm" data-act="retry">Reintentar</button>')}</div>`;
   }
 }
 window.addEventListener('hashchange', () => { $('#view').innerHTML = ''; window.scrollTo(0, 0); route(); });
@@ -914,13 +1522,14 @@ function setUser() {
   $('#userEmail').textContent = me.email;
   $('#avatar').textContent = initial;
   $('#avatarMobile').textContent = initial;
+  $('#secWarn').classList.toggle('hidden', !!me.twoFactor);
 }
 function showAuth() {
-  token = null;
   me = null;
-  store.set(TOKEN_KEY, null);
+  cats = [];
   $('#app').classList.add('hidden');
   $('#auth').classList.remove('hidden');
+  backToPassword();
 }
 async function logout() {
   try { await api('/auth/logout', { method: 'POST' }); } catch {}
@@ -946,18 +1555,50 @@ function setAuthMode(reg) {
   $('#authSwitchTxt').textContent = reg ? '¿Ya tienes cuenta?' : '¿No tienes cuenta?';
   $('#authToggle').textContent = reg ? 'Inicia sesión' : 'Regístrate gratis';
   $('#authForm').password.autocomplete = reg ? 'new-password' : 'current-password';
+  $('#authForm').password.placeholder = reg ? '8+ caracteres, letras y números' : 'Tu contraseña';
+  paintMeter($('#authMeter'), reg ? $('#authForm').password.value : '');
   $('#authError').textContent = '';
 }
 $('#authToggle').onclick = (e) => { e.preventDefault(); setAuthMode(!registering); };
+$('#authForm').password.addEventListener('input', (e) => { if (registering) paintMeter($('#authMeter'), e.target.value); });
+
+let loginTicket = null;
+let recoveryMode = false;
+function backToPassword() {
+  loginTicket = null;
+  $('#codeForm').classList.add('hidden');
+  $('#authForm').classList.remove('hidden');
+}
+function setRecoveryMode(on) {
+  recoveryMode = on;
+  const inp = $('#codeForm').code;
+  inp.value = '';
+  inp.maxLength = on ? 9 : 6;
+  inp.inputMode = on ? 'text' : 'numeric';
+  inp.placeholder = on ? 'xxxx-xxxx' : '000000';
+  inp.classList.toggle('code-input', !on);
+  $('#codeSub').textContent = on ? 'Escribe uno de los códigos de recuperación que guardaste. Cada uno sirve una sola vez.' : 'Abre tu app autenticadora y escribe el código de 6 cifras.';
+  $('#codeLabel').firstChild.textContent = on ? 'Código de recuperación' : 'Código de verificación';
+  $('#codeRecovery').textContent = on ? 'Usar la app autenticadora' : '¿Has perdido el móvil? Usa un código de recuperación';
+  $('#codeError').textContent = '';
+  setTimeout(() => inp.focus(), 30);
+}
 $('#authForm').onsubmit = async (ev) => {
   ev.preventDefault();
   const body = Object.fromEntries(new FormData(ev.target));
   $('#authSubmit').disabled = true;
+  $('#authError').textContent = '';
   try {
     const r = await api(registering ? '/auth/register' : '/auth/login', { method: 'POST', body });
-    token = r.token;
-    store.set(TOKEN_KEY, token);
+    if (r.twoFactor) {
+      loginTicket = r.ticket;
+      $('#authForm').classList.add('hidden');
+      $('#codeForm').classList.remove('hidden');
+      setRecoveryMode(false);
+      return;
+    }
     ev.target.reset();
+    paintMeter($('#authMeter'), '');
     await enter();
   } catch (e) {
     $('#authError').textContent = e.message;
@@ -965,9 +1606,36 @@ $('#authForm').onsubmit = async (ev) => {
     $('#authSubmit').disabled = false;
   }
 };
+$('#codeForm').onsubmit = async (ev) => {
+  ev.preventDefault();
+  const code = ev.target.code.value.trim();
+  if (!code) return;
+  $('#codeSubmit').disabled = true;
+  try {
+    await api('/auth/2fa', { method: 'POST', body: { ticket: loginTicket, code } });
+    $('#authForm').reset();
+    backToPassword();
+    await enter();
+  } catch (e) {
+    $('#codeError').textContent = e.message;
+    ev.target.code.select();
+    if (/caducado|Vuelve a empezar/.test(e.message)) setTimeout(() => { backToPassword(); $('#authError').textContent = e.message; }, 1500);
+  } finally {
+    $('#codeSubmit').disabled = false;
+  }
+};
+$('#codeForm').code.addEventListener('input', (e) => {
+  if (!recoveryMode) {
+    e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+    if (e.target.value.length === 6) $('#codeForm').requestSubmit();
+  }
+});
+$('#codeRecovery').onclick = (e) => { e.preventDefault(); setRecoveryMode(!recoveryMode); };
+$('#codeBack').onclick = (e) => { e.preventDefault(); backToPassword(); };
+
 $('#logout').onclick = logout;
-$('#btnAdd').onclick = () => expenseForm({}, location.hash.includes('calendario') ? { date: state.calSel } : {});
-$('#fabAdd').onclick = () => (location.hash.includes('mensuales') ? recurringForm() : expenseForm({}, location.hash.includes('calendario') ? { date: state.calSel } : {}));
+$('#btnAdd').onclick = () => currentAdd();
+$('#fabAdd').onclick = () => currentAdd();
 $('#moreBtn').onclick = openMore;
 $('#themeBtn').onclick = () => { applyTheme(isDark() ? 'light' : 'dark'); route(); };
 
@@ -978,5 +1646,4 @@ setAuthMode(false);
 if (IS_ELECTRON) $$('.nav-download').forEach((e) => e.classList.add('hidden'));
 fetch('/api/public-config').then((r) => r.json()).then((c) => { publicCfg = c; renderAuthInstall(); }).catch(() => {});
 if ('serviceWorker' in navigator && !IS_ELECTRON) navigator.serviceWorker.register('/sw.js').catch(() => {});
-if (token) enter().catch(showAuth);
-else showAuth();
+enter().catch(() => showAuth());

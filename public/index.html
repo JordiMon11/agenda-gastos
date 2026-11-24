@@ -14,10 +14,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Gastos" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <script>
-    // Aplica el tema guardado antes de pintar (evita parpadeo)
-    try { const t = localStorage.getItem('agenda_tema'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch {}
-  </script>
+  <script src="/theme.js"></script>
   <link rel="stylesheet" href="/styles.css" />
   <script src="/icons.js"></script>
   <script src="/vendor/chart.umd.js"></script>
@@ -51,12 +48,26 @@
           <div class="input-icon"><i data-i="mail"></i><input name="email" type="email" required autocomplete="email" placeholder="tu@correo.com" /></div>
         </label>
         <label class="field">Contraseña
-          <div class="input-icon"><i data-i="lock"></i><input name="password" type="password" required minlength="6" autocomplete="current-password" placeholder="Mínimo 6 caracteres" /></div>
+          <div class="input-icon pw-wrap"><i data-i="lock"></i><input name="password" type="password" required autocomplete="current-password" placeholder="Tu contraseña" /><button type="button" class="pw-eye" tabindex="-1" aria-label="Mostrar contraseña"><i data-i="eye"></i></button></div>
         </label>
+        <div class="pw-meter reg-only" id="authMeter"></div>
         <div class="error" id="authError"></div>
         <button class="btn primary full" id="authSubmit" style="height:46px">Entrar</button>
         <p class="auth-switch"><span id="authSwitchTxt">¿No tienes cuenta?</span> <a href="#" id="authToggle">Regístrate gratis</a></p>
         <div class="install-links" id="authInstall"></div>
+      </form>
+      <form id="codeForm" class="auth-card hidden" novalidate>
+        <div class="brand"><span class="logo"><i data-i="wallet"></i></span><div>Agenda de Gastos<small>Tus finanzas, en orden</small></div></div>
+        <div class="ichip lg" style="margin-top:26px"><i data-i="shield-check" class="lg"></i></div>
+        <h2 style="margin-top:14px">Verificación en dos pasos</h2>
+        <p class="sub" id="codeSub">Abre tu app autenticadora y escribe el código de 6 cifras.</p>
+        <label class="field" id="codeLabel">Código de verificación
+          <input name="code" class="code-input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" />
+        </label>
+        <div class="error" id="codeError"></div>
+        <button class="btn primary full" id="codeSubmit" style="height:46px">Verificar y entrar</button>
+        <p class="auth-switch"><a href="#" id="codeRecovery">¿Has perdido el móvil? Usa un código de recuperación</a></p>
+        <p class="auth-switch" style="margin-top:6px"><a href="#" id="codeBack">Volver</a></p>
       </form>
     </section>
   </div>
@@ -70,15 +81,18 @@
           <div class="nav-label">General</div>
           <a href="#/dashboard" data-view="dashboard"><i data-i="layout-dashboard"></i>Panel</a>
           <a href="#/gastos" data-view="gastos"><i data-i="receipt-text"></i>Gastos</a>
+          <a href="#/ingresos" data-view="ingresos"><i data-i="hand-coins"></i>Ingresos</a>
           <a href="#/calendario" data-view="calendario"><i data-i="calendar-days"></i>Calendario</a>
         </div>
         <div class="nav-group">
           <div class="nav-label">Planificación</div>
           <a href="#/mensuales" data-view="mensuales"><i data-i="repeat"></i>Gastos mensuales<span class="count hidden" id="dueCount"></span></a>
+          <a href="#/ahorros" data-view="ahorros"><i data-i="piggy-bank"></i>Ahorros</a>
           <a href="#/semanal" data-view="semanal"><i data-i="calendar-range"></i>Resumen semanal</a>
         </div>
         <div class="nav-group">
           <div class="nav-label">Cuenta</div>
+          <a href="#/seguridad" data-view="seguridad"><i data-i="shield-check"></i>Seguridad<span class="count hidden" id="secWarn">!</span></a>
           <a href="#/ajustes" data-view="ajustes"><i data-i="settings"></i>Ajustes</a>
           <a href="#/descargar" data-view="descargar" class="nav-download"><i data-i="download"></i>Descargar app</a>
         </div>
@@ -104,7 +118,7 @@
         </div>
         <div class="actions">
           <button class="icon-btn" id="themeBtn" title="Cambiar tema"><i data-i="moon"></i></button>
-          <button class="btn primary btn-add" id="btnAdd"><i data-i="plus"></i>Nuevo gasto</button>
+          <button class="btn primary btn-add" id="btnAdd"><i data-i="plus"></i><span id="btnAddTxt">Nuevo gasto</span></button>
         </div>
       </header>
       <section id="view"></section>
@@ -114,7 +128,7 @@
       <a href="#/dashboard" data-view="dashboard"><i data-i="layout-dashboard"></i>Panel</a>
       <a href="#/gastos" data-view="gastos"><i data-i="receipt-text"></i>Gastos</a>
       <button class="tab-add" id="fabAdd" aria-label="Nuevo gasto"><span class="plus"><i data-i="plus"></i></span></button>
-      <a href="#/mensuales" data-view="mensuales"><i data-i="repeat"></i>Mensuales</a>
+      <a href="#/ingresos" data-view="ingresos"><i data-i="hand-coins"></i>Ingresos</a>
       <button id="moreBtn" data-view="more"><i data-i="ellipsis"></i>Más</button>
     </nav>
   </div>

@@ -80,3 +80,14 @@ desktop/    App de escritorio (Electron) y empaquetado
 .github/    Tareas automáticas (avisos y compilación del escritorio)
 render.yaml Despliegue en Render
 ```
+
+## Seguridad
+
+- **Verificación en dos pasos (2FA)** con app autenticadora (Google Authenticator, Microsoft Authenticator, Authy), con 10 códigos de recuperación de un solo uso.
+- **Sesión en cookie** `HttpOnly`, `Secure` y `SameSite=Strict` (JavaScript no puede leerla). Los tokens se guardan en la base de datos solo como hash.
+- **Protección CSRF**: las peticiones que modifican datos exigen una cabecera propia y el mismo origen.
+- **Contraseñas con scrypt**, mínimo 8 caracteres con letras y números, comparación en tiempo constante.
+- **Bloqueo** de la cuenta 15 minutos tras 5 contraseñas incorrectas, límite de intentos por IP y límite de códigos 2FA por intento.
+- **Secreto del 2FA cifrado** con AES-256-GCM (clave en la variable `APP_SECRET`).
+- **Cabeceras de seguridad**: CSP estricta (sin scripts en línea), HSTS, X-Frame-Options, Referrer-Policy, Permissions-Policy, etc.
+- **Avisos por correo** de accesos desde dispositivos nuevos, bloqueos y cambios de seguridad. Desde el apartado *Seguridad* puedes ver y cerrar las sesiones abiertas y consultar la actividad.

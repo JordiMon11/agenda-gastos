@@ -11,6 +11,8 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
+      - key: APP_SECRET        # clave para cifrar los secretos del 2FA (Render la genera sola)
+        generateValue: true
       - key: DATABASE_URL        # cadena de conexión de Neon (PostgreSQL gratis)
         sync: false
       - key: BREVO_API_KEY       # clave API de Brevo (correo gratis)

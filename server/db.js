@@ -7,7 +7,7 @@ const crypto = require('crypto');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const FILE = path.join(DATA_DIR, 'db.json');
-const EMPTY = { users: [], sessions: [], categories: [], expenses: [], recurring: [] };
+const EMPTY = { users: [], sessions: [], categories: [], expenses: [], recurring: [], incomes: [], savings: [], savingMoves: [], securityLog: [] };
 
 const db = structuredClone(EMPTY); // objeto compartido: nunca se reasigna, solo se modifica
 let pool = null;

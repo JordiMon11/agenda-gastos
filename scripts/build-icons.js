@@ -12,6 +12,9 @@ const UI = [
   'user', 'lock', 'send', 'arrow-up-right', 'arrow-down-right', 'calendar-range', 'store', 'info', 'triangle-alert', 'share',
   'shield-check', 'sparkles', 'piggy-bank', 'banknote', 'calendar-check', 'list', 'tag', 'chevron-down', 'laptop', 'party-popper',
   'square-plus', 'calendar-clock', 'trophy', 'activity', 'sun', 'moon',
+  'shield', 'shield-alert', 'key-round', 'fingerprint', 'qr-code', 'copy', 'log-in', 'history', 'circle-alert', 'arrow-down-left',
+  'target', 'file-spreadsheet', 'eye', 'eye-off', 'arrow-up-down', 'arrow-up', 'arrow-down', 'circle-plus', 'circle-minus', 'globe', 'lock-keyhole',
+  'badge-check', 'circle-x', 'coins', 'landmark', 'chart-column', 'scale',
 ];
 // Iconos disponibles para las categorías
 const CATEGORY = [
