@@ -1,0 +1,20 @@
+# Cada 30 minutos llama al servidor para que revise y envíe los avisos por correo.
+# (El plan gratuito de Render se duerme si nadie lo usa; esta llamada lo despierta.)
+# Configura la variable del repositorio APP_URL (Settings > Secrets and variables > Actions > Variables).
+name: Avisos por correo
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+jobs:
+  avisos:
+    runs-on: ubuntu-latest
+    if: ${{ vars.APP_URL != '' }}
+    steps:
+      - name: Revisar avisos
+        run: |
+          for i in 1 2 3; do
+            curl -fsS --max-time 120 -X POST "${{ vars.APP_URL }}/api/cron" && exit 0
+            sleep 20
+          done
+          exit 1

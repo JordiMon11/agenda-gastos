@@ -1,0 +1,28 @@
+{
+  "name": "agenda-gastos-desktop",
+  "productName": "Agenda de Gastos",
+  "version": "1.0.0",
+  "description": "Agenda de Gastos para escritorio",
+  "author": "Agenda de Gastos",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "icons": "electron scripts/make-icons.js",
+    "dist": "electron-builder --win --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.agendagastos.app",
+    "productName": "Agenda de Gastos",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["main.js", "config.json", "build/icon.png"],
+    "win": { "target": "nsis", "icon": "build/icon.png", "artifactName": "Agenda-Gastos-Setup.${ext}" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "shortcutName": "Agenda de Gastos" },
+    "mac": { "target": "dmg", "icon": "build/icon.png", "artifactName": "Agenda-Gastos.${ext}" },
+    "linux": { "target": "AppImage", "icon": "build/icon.png", "artifactName": "Agenda-Gastos.${ext}" }
+  }
+}

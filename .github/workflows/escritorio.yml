@@ -1,0 +1,67 @@
+# Compila la app de escritorio (Windows, macOS y Linux) y la publica en "Releases".
+# Ejecútalo desde la pestaña Actions > "App de escritorio" > Run workflow.
+name: App de escritorio
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versión (por ejemplo 1.0.0)"
+        required: true
+        default: "1.0.0"
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm version ${{ inputs.version }} --no-git-tag-version --allow-same-version
+      - name: Compilar
+        shell: bash
+        run: |
+          case "${{ runner.os }}" in
+            Windows) npx electron-builder --win --publish never ;;
+            macOS)   npx electron-builder --mac --publish never ;;
+            Linux)   npx electron-builder --linux --publish never ;;
+          esac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ runner.os }}
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.dmg
+            desktop/dist/*.AppImage
+          if-no-files-found: ignore
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: Agenda de Gastos ${{ inputs.version }}
+          make_latest: true
+          files: out/*
+          body: |
+            Descarga la versión para tu ordenador:
+            - **Windows**: `Agenda-Gastos-Setup.exe`
+            - **macOS**: `Agenda-Gastos.dmg` (clic derecho > Abrir la primera vez)
+            - **Linux**: `Agenda-Gastos.AppImage`
+
+            En el móvil no hace falta descargar nada: abre la web y pulsa «Instalar aplicación».

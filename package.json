@@ -1,0 +1,20 @@
+{
+  "name": "agenda-gastos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Agenda de gastos: web, móvil (PWA) y escritorio, con categorías, calendario, gráficos, resúmenes semanales y avisos por correo",
+  "scripts": {
+    "start": "node server/index.js",
+    "desktop": "npm --prefix desktop start",
+    "desktop:build": "npm --prefix desktop run dist"
+  },
+  "engines": {
+    "node": ">=20.12"
+  },
+  "dependencies": {
+    "chart.js": "^4.4.7",
+    "express": "^4.21.2",
+    "nodemailer": "^10.6.1",
+    "pg": "^8.13.1"
+  }
+}

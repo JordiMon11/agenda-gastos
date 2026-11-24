@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agenda de Gastos</title>
+  <meta name="theme-color" content="#4f46e5" />
+  <meta name="description" content="Apunta tus gastos, mira en qué y dónde gastas y recibe avisos de tus gastos mensuales." />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/png" href="/icons/favicon-32.png" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Gastos" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="/vendor/chart.umd.js"></script>
+</head>
+<body>
+  <!-- Acceso -->
+  <div id="auth" class="auth hidden">
+    <form id="authForm" class="auth-card">
+      <div class="brand big">💸 Agenda de Gastos</div>
+      <p class="muted" id="authSubtitle">Inicia sesión para ver tus gastos</p>
+      <label class="reg-only">Nombre<input name="name" autocomplete="name" /></label>
+      <label>Correo electrónico<input name="email" type="email" required autocomplete="email" /></label>
+      <label>Contraseña<input name="password" type="password" required minlength="6" autocomplete="current-password" /></label>
+      <div class="error" id="authError"></div>
+      <button class="btn primary full" id="authSubmit">Entrar</button>
+      <p class="muted center"><a href="#" id="authToggle">¿No tienes cuenta? Regístrate</a></p>
+      <div class="install-links" id="authInstall"></div>
+    </form>
+  </div>
+
+  <!-- Aplicación -->
+  <div id="app" class="layout hidden">
+    <aside class="sidebar">
+      <div class="brand">💸 <span>Agenda de Gastos</span></div>
+      <nav id="nav">
+        <a href="#/dashboard" data-view="dashboard">📊 <span>Panel</span></a>
+        <a href="#/gastos" data-view="gastos">🧾 <span>Gastos</span></a>
+        <a href="#/calendario" data-view="calendario">📅 <span>Calendario</span></a>
+        <a href="#/mensuales" data-view="mensuales">🔁 <span>Gastos mensuales</span></a>
+        <a href="#/semanal" data-view="semanal">🗓️ <span>Resumen semanal</span></a>
+        <a href="#/ajustes" data-view="ajustes">⚙️ <span>Ajustes</span></a>
+        <a href="#/descargar" data-view="descargar" id="navDownload">📲 <span>Descargar app</span></a>
+      </nav>
+      <div class="user-box">
+        <div class="avatar" id="avatar"></div>
+        <div class="user-info"><b id="userName"></b><small id="userEmail"></small></div>
+        <button class="icon-btn" id="logout" title="Cerrar sesión">⎋</button>
+      </div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <h1 id="viewTitle"></h1>
+        <button class="btn primary" id="btnAdd">＋ Nuevo gasto</button>
+      </header>
+      <section id="view"></section>
+    </main>
+  </div>
+
+  <dialog id="modal">
+    <form id="modalForm">
+      <h2 id="modalTitle"></h2>
+      <div id="modalBody"></div>
+      <div class="error" id="modalError"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="modalCancel">Cancelar</button>
+        <button class="btn primary" id="modalOk">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+  <datalist id="placesList"></datalist>
+  <div id="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>

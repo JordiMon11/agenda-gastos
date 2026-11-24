@@ -1,0 +1,25 @@
+# Despliegue gratuito en Render (https://render.com) con "New > Blueprint"
+services:
+  - type: web
+    name: agenda-gastos
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL        # cadena de conexión de Neon (PostgreSQL gratis)
+        sync: false
+      - key: BREVO_API_KEY       # clave API de Brevo (correo gratis)
+        sync: false
+      - key: MAIL_FROM_EMAIL     # correo remitente verificado en Brevo
+        sync: false
+      - key: MAIL_FROM_NAME
+        value: Agenda de Gastos
+      - key: DESKTOP_DOWNLOAD_URL
+        sync: false
+      - key: RELEASES_URL
+        sync: false
