@@ -1,0 +1,21 @@
+# Pruebas automáticas: se ejecutan en cada cambio de la rama «pruebas» y en cada petición para pasar a producción.
+name: Pruebas
+on:
+  push:
+    branches: [pruebas]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Comprobar la sintaxis de la interfaz
+        run: for f in public/*.js; do node --check "$f"; done

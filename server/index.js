@@ -17,6 +17,11 @@ const auth = require('./auth');
 const finance = require('./finance');
 const admin = require('./admin');
 const receipts = require('./receipts');
+const planning = require('./planning');
+const R = require('./recurrence');
+const L = require('./ledger');
+const insights = require('./insights');
+const APP_ENV = process.env.APP_ENV || 'produccion';
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -73,11 +78,12 @@ app.use('/vendor/tesseract-core', express.static(path.join(ROOT, 'node_modules',
 app.use('/vendor/tessdata', express.static(path.join(ROOT, 'node_modules', '@tesseract.js-data', 'spa', '4.0.0_best_int'), longCache));
 
 // ---------- Rutas públicas ----------
-app.get('/healthz', (req, res) => res.json({ ok: true, cifrado: S.hasKey() }));
+app.get('/healthz', (req, res) => res.json({ ok: true, cifrado: S.hasKey(), entorno: APP_ENV }));
 app.get('/api/public-config', (req, res) =>
   res.json({ downloadUrl: process.env.DESKTOP_DOWNLOAD_URL || 'https://github.com/JordiMon11/agenda-gastos/releases/latest/download/Agenda-Gastos-Setup.exe',
     releasesUrl: process.env.RELEASES_URL || 'https://github.com/JordiMon11/agenda-gastos/releases/latest',
-    banner: db.settings.banner || '', bannerType: db.settings.bannerType || 'info', registrationOpen: !db.users.length || db.settings.registrationOpen !== false })
+    banner: db.settings.banner || '', bannerType: db.settings.bannerType || 'info', registrationOpen: !db.users.length || db.settings.registrationOpen !== false,
+    environment: APP_ENV })
 );
 // Disparador externo de los avisos (GitHub Actions lo llama cada 30 min y así también despierta el servidor gratuito).
 // Es seguro dejarlo público: solo revisa avisos pendientes y cada aviso se envía una única vez.
@@ -98,6 +104,7 @@ app.use('/api', auth.router);
 app.use('/api', finance.router);
 app.use('/api/admin', admin.router);
 app.use('/api', receipts.router);
+app.use('/api', planning.router);
 
 // ---------- Categorías ----------
 const mine = (list, req) => list.filter((x) => x.userId === req.user.id);
@@ -129,6 +136,7 @@ app.delete('/api/categories/:id', h(async (req, res) => {
   const c = findMine(db.categories, req);
   db.categories.splice(db.categories.indexOf(c), 1);
   for (const x of [...db.expenses, ...db.recurring]) if (x.categoryId === c.id) x.categoryId = null;
+  db.budgets = db.budgets.filter((b) => b.categoryId !== c.id);
   store.save();
   res.json({ ok: true });
 }));
@@ -142,6 +150,9 @@ function cleanExpense(b, req) {
   if (!D.isYmd(b.date)) throw new HttpError(400, 'Fecha no válida');
   if (b.categoryId && !db.categories.some((c) => c.id === b.categoryId && c.userId === req.user.id))
     throw new HttpError(400, 'Categoría no válida');
+  if (b.accountId && !db.accounts.some((a) => a.id === b.accountId && a.userId === req.user.id)) throw new HttpError(400, 'Cuenta no válida');
+  const tags = (Array.isArray(b.tags) ? b.tags : String(b.tags || '').split(/[,#]/))
+    .map((t) => String(t).trim().toLowerCase().replace(/\s+/g, '-').slice(0, 24)).filter(Boolean);
   return {
     name,
     amount: round(amount),
@@ -149,22 +160,37 @@ function cleanExpense(b, req) {
     date: b.date,
     place: String(b.place || '').trim().slice(0, 100),
     notes: String(b.notes || '').slice(0, 500),
+    accountId: b.accountId || null,
+    paymentMethod: L.PAYMENT_METHODS[b.paymentMethod] ? b.paymentMethod : null,
+    tags: [...new Set(tags)].slice(0, 8),
   };
 }
+receipts.setExpenseCleaner(cleanExpense);
 app.get('/api/expenses', (req, res) => {
-  const { from, to, category, q } = req.query;
+  const { from, to, category, q, account, tag } = req.query;
   let list = mine(db.expenses, req);
   if (from) list = list.filter((e) => e.date >= from);
   if (to) list = list.filter((e) => e.date <= to);
   if (category) list = list.filter((e) => (category === 'none' ? !e.categoryId : e.categoryId === category));
+  if (account) list = list.filter((e) => e.accountId === account);
+  if (tag) list = list.filter((e) => (e.tags || []).includes(String(tag)));
   if (q) {
     const s = String(q).toLowerCase();
-    list = list.filter((e) => `${e.name} ${e.place} ${e.notes}`.toLowerCase().includes(s));
+    list = list.filter((e) => `${e.name} ${e.place} ${e.notes} ${(e.tags || []).join(' ')}`.toLowerCase().includes(s));
   }
   res.json(list.sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || '').localeCompare(a.createdAt || '')));
 });
 app.post('/api/expenses', h(async (req, res) => {
   const e = { id: store.id(), userId: req.user.id, ...cleanExpense(req.body, req), ...(req.body?.scanned ? { scanned: true } : {}), createdAt: new Date().toISOString() };
+  db.expenses.push(e);
+  store.save();
+  res.json(e);
+}));
+// Duplicar un gasto (por ejemplo, una compra que repites)
+app.post('/api/expenses/:id/duplicate', h(async (req, res) => {
+  const src = findMine(db.expenses, req);
+  const date = D.isYmd(req.body?.date) ? req.body.date : D.ymd(D.today());
+  const e = { ...cleanExpense({ ...src, date }, req), id: store.id(), userId: req.user.id, createdAt: new Date().toISOString() };
   db.expenses.push(e);
   store.save();
   res.json(e);
@@ -178,6 +204,7 @@ app.put('/api/expenses/:id', h(async (req, res) => {
 app.delete('/api/expenses/:id', h(async (req, res) => {
   const e = findMine(db.expenses, req);
   db.expenses.splice(db.expenses.indexOf(e), 1);
+  for (const r of db.receipts) if (r.expenseId === e.id) r.expenseId = null; // el ticket se conserva
   store.save();
   res.json({ ok: true });
 }));
@@ -187,37 +214,61 @@ app.get('/api/places', (req, res) => {
   res.json(Object.keys(counts).sort((a, b) => counts[b] - counts[a]));
 });
 
-// ---------- Gastos mensuales (actividades recurrentes) ----------
+// ---------- Pagos fijos (recurrentes: semanales, mensuales, anuales…) ----------
 function cleanRecurring(b, req) {
   const amount = Number(b?.amount);
-  const day = Number(b?.dayOfMonth);
   const remind = Number(b?.remindDaysBefore ?? 3);
   const name = String(b?.name || '').trim().slice(0, 100);
-  if (!name) throw new HttpError(400, 'El gasto mensual necesita un nombre');
+  if (!name) throw new HttpError(400, 'El pago fijo necesita un nombre');
   if (!(amount > 0)) throw new HttpError(400, 'El importe debe ser mayor que 0');
-  if (!Number.isInteger(day) || day < 1 || day > 31) throw new HttpError(400, 'El día del mes debe estar entre 1 y 31');
   if (!Number.isInteger(remind) || remind < 0 || remind > 30) throw new HttpError(400, 'Los días de aviso deben estar entre 0 y 30');
   if (b.categoryId && !db.categories.some((c) => c.id === b.categoryId && c.userId === req.user.id))
     throw new HttpError(400, 'Categoría no válida');
-  return {
+  if (b.accountId && !db.accounts.some((a) => a.id === b.accountId && a.userId === req.user.id)) throw new HttpError(400, 'Cuenta no válida');
+  const frequency = R.FREQS[b.frequency] ? b.frequency : 'monthly';
+  let anchorDate = D.isYmd(b.anchorDate) ? b.anchorDate : null;
+  let day = Number(b?.dayOfMonth);
+  if (anchorDate) day = D.parse(anchorDate).getDate();
+  else {
+    if (!Number.isInteger(day) || day < 1 || day > 31) throw new HttpError(400, 'Indica la fecha del primer cobro');
+    const t = D.today();
+    anchorDate = D.ymd(D.dueInMonth(day, t.getFullYear(), t.getMonth()));
+  }
+  const out = {
     name,
     amount: round(amount),
     categoryId: b.categoryId || null,
+    accountId: b.accountId || null,
+    frequency,
+    anchorDate,
     dayOfMonth: day,
     place: String(b.place || '').trim().slice(0, 100),
     remindDaysBefore: remind,
     autoAdd: !!b.autoAdd,
     active: b.active === undefined ? true : !!b.active,
   };
+  if (frequency === 'custom') {
+    const every = Math.round(Number(b.every));
+    if (!(every >= 1 && every <= 365)) throw new HttpError(400, 'Indica cada cuántos días o meses se repite');
+    Object.assign(out, { every, unit: b.unit === 'days' ? 'days' : 'months' });
+  }
+  return out;
 }
 function recurringView(r) {
-  const t = D.today();
-  const due = D.nextDue(r, t);
-  return { ...r, nextDue: D.ymd(due), daysLeft: D.diffDays(t, due), paidThisMonth: r.lastPaidMonth === D.monthKey(t) };
+  const st = R.status(r);
+  return {
+    ...r,
+    state: st.state,
+    nextDue: st.nextDue ? D.ymd(st.nextDue) : null,
+    daysLeft: st.daysLeft,
+    paidThisMonth: st.paidThisPeriod,
+    monthly: R.monthlyAmount(r),
+    frequencyLabel: R.freqLabel(r),
+  };
 }
-app.get('/api/recurring', (req, res) => res.json(mine(db.recurring, req).map(recurringView).sort((a, b) => a.daysLeft - b.daysLeft)));
+app.get('/api/recurring', (req, res) => res.json(mine(db.recurring, req).map(recurringView).sort((a, b) => (a.daysLeft ?? 9999) - (b.daysLeft ?? 9999))));
 app.post('/api/recurring', h(async (req, res) => {
-  const r = { id: store.id(), userId: req.user.id, ...cleanRecurring(req.body, req), startDate: D.ymd(D.today()), createdAt: new Date().toISOString() };
+  const r = { id: store.id(), userId: req.user.id, ...cleanRecurring(req.body, req), startDate: D.ymd(D.today()), paid: [], createdAt: new Date().toISOString() };
   db.recurring.push(r);
   store.save();
   await scheduler.checkUser(req.user); // por si el aviso ya toca
@@ -225,9 +276,10 @@ app.post('/api/recurring', h(async (req, res) => {
 }));
 app.put('/api/recurring/:id', h(async (req, res) => {
   const r = findMine(db.recurring, req);
-  const before = r.dayOfMonth;
+  const before = r.anchorDate;
   Object.assign(r, cleanRecurring(req.body, req));
-  if (before !== r.dayOfMonth) delete r.lastRemindedFor;
+  if (before !== r.anchorDate) delete r.lastRemindedFor;
+  if (r.frequency !== 'custom') { delete r.every; delete r.unit; }
   store.save();
   await scheduler.checkUser(req.user);
   res.json(recurringView(r));
@@ -238,26 +290,32 @@ app.delete('/api/recurring/:id', h(async (req, res) => {
   store.save();
   res.json({ ok: true });
 }));
-// Marcar como pagado este mes (lo añade a tus gastos)
+// Marcar como pagado el cobro pendiente (atrasado o el próximo): crea el gasto real una sola vez
 app.post('/api/recurring/:id/pay', h(async (req, res) => {
   const r = findMine(db.recurring, req);
-  const t = D.today();
-  const mk = D.monthKey(t);
-  if (r.lastPaidMonth === mk) throw new HttpError(400, 'Ya está marcado como pagado este mes');
+  const st = R.status(r);
+  if (!r.active) throw new HttpError(400, 'Este pago está en pausa');
+  if (!st.nextDue || st.daysLeft > 45) throw new HttpError(400, 'Todavía no hay ningún cobro pendiente');
+  if (R.isPaid(r, st.nextDue)) throw new HttpError(400, 'Ese cobro ya está marcado como pagado');
+  const amount = Number(req.body?.amount) > 0 ? round(Number(req.body.amount)) : r.amount;
   const e = {
     id: store.id(),
     userId: req.user.id,
     name: r.name,
-    amount: r.amount,
+    amount,
     categoryId: r.categoryId,
-    date: D.ymd(t),
+    date: D.ymd(D.today()),
     place: r.place || '',
-    notes: 'Gasto mensual',
+    notes: `Pago fijo (vencimiento ${st.nextDue.toLocaleDateString('es-ES')})`,
     recurringId: r.id,
+    dueDate: D.ymd(st.nextDue),
+    accountId: r.accountId || null,
+    paymentMethod: 'domiciliacion',
+    tags: [],
     createdAt: new Date().toISOString(),
   };
   db.expenses.push(e);
-  r.lastPaidMonth = mk;
+  R.markPaid(r, st.nextDue);
   store.save();
   res.json({ expense: e, recurring: recurringView(r) });
 }));

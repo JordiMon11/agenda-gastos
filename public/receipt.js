@@ -1,5 +1,6 @@
 /* Escáner de tickets: lee la foto (con IA si el servidor la tiene, o gratis en el dispositivo con OCR),
-   detecta total, tienda, categoría y fecha, guarda el gasto de hoy y lo abre para poder cambiarlo. */
+   detecta total, tienda, categoría, fecha, IVA, forma de pago y productos, y muestra una pantalla de revisión.
+   El gasto solo se guarda (con la foto como justificante) cuando el usuario lo confirma. */
 
 let aiScan = null;
 async function scanStatus() {
@@ -24,7 +25,7 @@ function pickReceipt() {
     title: 'Escanear ticket',
     icon: 'scan-line',
     actions: false,
-    html: `<p class="set-desc">Haz la foto al ticket <b>entero</b>, recto y con buena luz. Se guardará como gasto de hoy y luego podrás cambiar lo que quieras.</p>
+    html: `<p class="set-desc">Haz la foto al ticket <b>entero</b>, recto y con buena luz. Revisarás los datos antes de guardarlos.</p>
       <div class="action-list">
         <button type="button" id="scCam">${ic('camera')}<span>Hacer una foto<small>Abre la cámara</small></span></button>
         <button type="button" id="scGal">${ic('image')}<span>Elegir de la galería<small>Una foto que ya tengas</small></span></button>
@@ -120,7 +121,10 @@ async function ocrReceipt(bitmap) {
   }
   updateScan('Leyendo el texto del ticket…', 40);
   const { data } = await ocrWorker.recognize(preprocessForOcr(bitmap));
-  return { source: 'ocr', ...parseReceipt(data.text || '') };
+  const parsed = parseReceipt(data.text || '');
+  // Confianza: la del propio lector, rebajada si el total no estaba claro o no se encontró
+  const confidence = Math.round(Math.max(5, Math.min(98, (data.confidence || 60) - (parsed.uncertain ? 20 : 0) - (parsed.total ? 0 : 35))));
+  return { source: 'ocr', ...parsed, ...receiptExtras(data.text || '', parsed.total), confidence };
 }
 
 // ---------- Interpretar el texto del ticket ----------
@@ -235,13 +239,34 @@ function parseReceipt(text) {
   return { isReceipt: !!(total || items.length), merchant, total, date, categoryId: cat?.id || null, items, uncertain };
 }
 
+// Datos extra del ticket: CIF/NIF, hora, IVA, base, forma de pago, nº de ticket y dirección.
+// Si algo no aparece se deja vacío: nunca se inventa.
+function receiptExtras(text, total) {
+  const lines = text.split(/\r?\n/).map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const U = lines.map(norm);
+  const full = U.join('\n');
+  const taxId = (/\b(?:C\.?I\.?F|N\.?I\.?F)\.?:?\s*([A-HJ-NP-SUVW][-\s]?\d{7}[0-9A-J]|\d{8}[-\s]?[A-Z])\b/.exec(full) || [])[1]?.replace(/[-\s]/g, '') || '';
+  const time = (/\b([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\b/.exec(full) || []).slice(1, 3).join(':');
+  let taxAmount = null;
+  const cuota = U.filter((l) => /CUOTA|I\.?V\.?A\.? ?(TOTAL|\d{1,2} ?%)|TOTAL I\.?V\.?A/.test(l) && !/BASE IMPONIBLE.*CUOTA/.test(l)).flatMap(amountsIn).filter((a) => !total || a < total * 0.3);
+  if (cuota.length) taxAmount = Math.round(Math.max(...cuota) * 100) / 100;
+  const card = /TARJETA|VISA|MASTERCARD|MAESTRO|CONTACTLESS|DATAFONO|TPV|AMEX|APPLE PAY|GOOGLE PAY/.test(full);
+  const cash = /EFECTIVO|ENTREGADO|CAMBIO|METALICO/.test(full);
+  const paymentMethod = card ? 'tarjeta' : cash ? 'efectivo' : null;
+  const ticketNumber = (/(?:TICKET|FACTURA(?: SIMPLIFICADA)?|FRA\.?|N[º°O]\.? ?(?:DE )?(?:TICKET|FACTURA|OPERACION)|NUM\.? ?(?:TICKET|FACTURA)?)\s*(?:N[º°O]\.?|NUM\.?)?\s*:?\s*([A-Z0-9][A-Z0-9/\-]{3,20})/.exec(full) || [])[1] || '';
+  const address = lines.find((l, i) => i < 10 && /^(C\/|CALLE|AVDA|AVENIDA|PLAZA|PZA|CTRA|CARRETERA|PASEO|P\.º|RONDA|CAMINO|PG\.?|POL[IÍ]GONO)\b/i.test(l)) || '';
+  return { taxId, time, taxAmount, paymentMethod, ticketNumber: /\d/.test(ticketNumber) ? ticketNumber : '', address: address.slice(0, 120) };
+}
+
 // ---------- Flujo completo ----------
+let lastScanFile = null;
 async function processReceipt(file) {
-  if (!/^image\//.test(file.type)) return toast('Elige una foto del ticket', true);
+  if (!/^image\//.test(file.type)) return toast('Elige una foto del ticket (JPG, PNG o HEIC si tu móvil lo permite)', true);
+  lastScanFile = file;
   const preview = URL.createObjectURL(file);
   showScanProgress(preview);
   try {
-    const bitmap = await loadBitmap(file);
+    const bitmap = await loadBitmap(file).catch(() => { throw new Error('Este formato de foto no se puede abrir en este navegador. Prueba con JPG o PNG.'); });
     let result = null;
     if (await scanStatus()) {
       updateScan('La IA está leyendo el ticket…', 25);
@@ -256,7 +281,9 @@ async function processReceipt(file) {
     }
     if (!result) result = await ocrReceipt(bitmap);
     updateScan('¡Listo!', 100);
-    await finishScan(result);
+    // Foto comprimida para guardarla como justificante
+    const photo = drawScaled(bitmap, 1400).toDataURL('image/jpeg', 0.72);
+    setTimeout(() => reviewReceipt(result, photo), 120);
   } catch (e) {
     closeModal();
     toast('No se pudo leer el ticket: ' + e.message, true);
@@ -265,20 +292,73 @@ async function processReceipt(file) {
   }
 }
 
-async function finishScan(r) {
+// Pantalla de revisión: nada se guarda hasta que el usuario lo confirma
+async function reviewReceipt(r, photo) {
   closeModal();
   const today = ymd(todayD());
-  const name = r.merchant ? r.merchant : 'Compra con ticket';
-  const notes = r.items?.length ? ('Artículos: ' + r.items.slice(0, 12).map((i) => `${i.name} (${eur(i.amount)})`).join(', ')).slice(0, 500) : '';
-  const scan = { source: r.source, ticketDate: r.date && r.date !== today ? r.date : null, uncertain: !!r.uncertain };
-  if (r.total && r.isReceipt !== false) {
-    const saved = await api('/expenses', { method: 'POST', body: { name, amount: r.total, categoryId: r.categoryId || '', date: today, place: r.merchant || '', notes, scanned: true } });
-    toast('Gasto añadido desde el ticket');
-    route();
-    setTimeout(() => expenseForm(saved, {}, { scan: { ...scan, saved: true } }), 150);
-  } else {
-    setTimeout(() => expenseForm({}, { date: today, categoryId: r.categoryId }, { scan: { ...scan, saved: false }, prefill: { name: r.merchant || '', place: r.merchant || '', notes } }), 80);
-  }
+  const ticketDate = r.date && r.date !== today ? r.date : null;
+  const conf = Math.max(0, Math.min(100, Math.round(r.confidence ?? (r.total ? 70 : 30))));
+  const confTxt = conf >= 75 ? 'Alta' : conf >= 50 ? 'Media' : 'Baja';
+  const items = (r.items || []).slice(0, 30);
+  const notes = items.length ? ('Artículos: ' + items.slice(0, 12).map((i) => `${i.quantity > 1 ? i.quantity + '× ' : ''}${i.name} (${eur(i.amount)})`).join(', ')).slice(0, 500) : '';
+  const info = [
+    r.taxId && ['CIF/NIF', esc(r.taxId)], r.time && ['Hora', esc(r.time)], r.taxAmount && ['IVA', eur(r.taxAmount)],
+    r.ticketNumber && ['Nº ticket', esc(r.ticketNumber)], r.address && ['Dirección', esc(r.address)],
+  ].filter(Boolean);
+  openModal({
+    title: 'Revisa el ticket',
+    icon: 'scan-line',
+    okText: 'Guardar gasto',
+    html: `<div class="review">
+      <div class="review-img"><img src="${photo}" alt="Foto del ticket"></div>
+      <div class="review-data">
+        <div class="conf conf-${confTxt.toLowerCase()}"><span>${ic(conf >= 75 ? 'circle-check' : 'triangle-alert', 'sm')}Confianza de lectura: <b>${confTxt}</b> (${conf} %) · ${r.source === 'ai' ? 'leído con IA' : 'leído en tu dispositivo'}</span><div class="progress thin"><div style="width:${conf}%"></div></div></div>
+        ${!r.total ? `<div class="notice warn">${ic('triangle-alert', 'sm')}<span>No he podido leer el total. Escríbelo tú.</span></div>` : r.uncertain ? `<div class="notice warn">${ic('triangle-alert', 'sm')}<span>Comprueba el importe: no estaba del todo claro.</span></div>` : ''}
+        <div id="dupWarn"></div>
+        <label class="field">Importe<div class="input-money"><input name="amount" type="number" inputmode="decimal" step="0.01" min="0.01" required value="${r.total ?? ''}" placeholder="0,00"><span>€</span></div></label>
+        <label class="field">Establecimiento<input name="name" required maxlength="100" value="${esc(r.merchant || '')}" placeholder="Nombre de la tienda"></label>
+        ${catPicker(r.categoryId)}
+        <div class="row">
+          <label class="field">Fecha<input name="date" type="date" required value="${today}"></label>
+          <label class="field">Método de pago<select name="paymentMethod"><option value="">—</option>${Object.entries(PAY_METHODS).map(([k, l]) => `<option value="${k}" ${r.paymentMethod === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        </div>
+        ${ticketDate ? `<div class="scan-date">${ic('calendar-days', 'sm')}<span>El ticket es del <b>${fmtDate(ticketDate, { day: 'numeric', month: 'long', year: 'numeric' })}</b></span><button type="button" class="btn sm" id="useTicketDate">Usar esa fecha</button></div>` : ''}
+        ${accountSelect('')}
+        ${info.length ? `<div class="facts small">${info.map(([l, v]) => `<div><small>${l}</small><b>${v}</b></div>`).join('')}</div>` : ''}
+        ${items.length ? `<details class="more-fields"><summary>${ic('chevron-down', 'sm')}Productos detectados (${items.length})</summary><div class="items">${items.map((i) => `<div><span>${i.quantity > 1 ? i.quantity + ' × ' : ''}${esc(i.name)}</span><b>${eur(i.amount)}</b></div>`).join('')}</div></details>` : ''}
+        <label class="field">Notas<textarea name="notes" maxlength="500">${esc(notes)}</textarea></label>
+        <button type="button" class="btn sm ghost" id="rescan">${ic('rotate-ccw', 'sm')}Volver a escanear</button>
+      </div></div>`,
+    onSubmit: async (d) => {
+      const expense = { name: d.name, amount: Number(d.amount), categoryId: d.categoryId, date: d.date, place: d.name, notes: d.notes, paymentMethod: d.paymentMethod, accountId: d.accountId || '' };
+      const receipt = { merchant: d.name, date: r.date || d.date, time: r.time, total: r.total, taxAmount: r.taxAmount, taxId: r.taxId, ticketNumber: r.ticketNumber, paymentMethod: r.paymentMethod, items, source: r.source, confidence: conf };
+      await api('/receipts', { method: 'POST', body: { expense, receipt, image: photo } });
+      toast('Gasto guardado desde el ticket');
+      route();
+      refreshNotifs();
+    },
+  });
+  bindCatPicker($('#modalBody'));
+  $('#modalBody').classList.add('wide');
+  $('#useTicketDate')?.addEventListener('click', (e) => {
+    $('#modalBody input[name=date]').value = ticketDate;
+    e.currentTarget.disabled = true;
+    e.currentTarget.textContent = 'Fecha cambiada';
+    checkDup();
+  });
+  $('#rescan').onclick = () => { closeModal(); pickReceipt(); };
+  // Aviso de posible duplicado (no bloquea: puede ser una compra legítima repetida)
+  const checkDup = async () => {
+    const amount = Number($('#modalBody input[name=amount]')?.value);
+    if (!(amount > 0)) return;
+    try {
+      const dups = await api('/receipts/duplicates', { method: 'POST', body: { amount, date: $('#modalBody input[name=date]').value, merchant: $('#modalBody input[name=name]').value, ticketNumber: r.ticketNumber } });
+      const w = $('#dupWarn');
+      if (w) w.innerHTML = dups.length ? `<div class="notice warn">${ic('copy', 'sm')}<span><b>Posible duplicado.</b> Ya tienes ${dups.map((x) => `«${esc(x.name)}» de ${eur(x.amount)} el ${fmtDate(x.date)} (${esc(x.reason.toLowerCase())})`).join('; ')}. Puedes guardarlo igualmente si es otra compra.</span></div>` : '';
+    } catch {}
+  };
+  $('#modalBody input[name=amount]').addEventListener('change', checkDup);
+  checkDup();
 }
 
 $('#btnScan').onclick = pickReceipt;

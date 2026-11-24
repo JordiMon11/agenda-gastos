@@ -1,16 +1,27 @@
 # 💸 Agenda de Gastos
 
-Apunta tus gastos y mira en qué y dónde gastas. Funciona en **web**, **móvil** (app instalable) y **escritorio** (Windows, macOS y Linux). Todas las versiones usan la misma cuenta y los mismos datos.
+Tu agenda financiera: gastos, ingresos, cuentas, presupuestos, previsiones, escáner de tickets y asistente. Funciona en **web**, **móvil** (app instalable) y **escritorio** (Windows, macOS y Linux). Todas las versiones usan la misma cuenta y los mismos datos.
 
 ## Funciones
 
-- Cuenta vinculada a tu **correo electrónico**.
-- **Gastos** con concepto, importe, fecha, **categoría**, **lugar (dónde)** y notas. Filtros, búsqueda y exportación a CSV.
-- **Categorías** personalizables (icono, nombre y color).
-- **Panel con gráficos**: por categoría, por día, últimos 6 meses y dónde gastas más.
-- **Calendario** con el total de cada día y los gastos mensuales marcados con 🔔.
-- **Gastos mensuales**: **correo de aviso X días antes** de cada cobro, registro automático y botón «marcar pagado».
-- **Resumen semanal** con gráficos; se **envía por correo cada lunes**.
+Un centro de control de tus finanzas personales. Todo funciona **gratis** y con tus datos reales.
+
+- **Inicio**: saldo total, cuánto puedes gastar al día, ingresos, gastos y ahorro del mes, previsión de fin de mes, presupuestos, consejos y actividad reciente.
+- **Movimientos**: gastos con categoría, lugar, **cuenta**, **método de pago**, **etiquetas** y notas. Buscar, filtrar (categoría, cuenta, etiqueta), duplicar y exportar a **Excel** o **CSV**.
+- **Ingresos** con origen y cuenta, en tabla ordenable.
+- **Cuentas**: corriente, ahorro, efectivo, tarjetas… con su saldo calculado, **transferencias** entre cuentas (no cuentan como gasto ni ingreso) y **ajuste de saldo**. Preparada para Open Banking (PSD2) en el futuro; nunca se guardan claves del banco.
+- **Calendario** mensual y semanal: gastos (rojo), ingresos (verde), facturas pendientes (azul) y pagos recurrentes (naranja), con filtros por tipo, categoría y cuenta, y balance de cada día.
+- **Pagos fijos** con cualquier frecuencia (diaria, semanal, quincenal, mensual, trimestral, semestral, anual o personalizada), estados *pendiente / pagado / atrasado / en pausa*, aviso el mismo día, 1, 3 o 7 días antes, registro automático y «marcar pagado» sin duplicar.
+- **Presupuestos** general y por categoría, con niveles *correcto / seguimiento / precaución / alerta / superado* (porcentajes configurables), ritmo de gasto, **propuestas calculadas con tus últimos meses** (aceptar, modificar o rechazar) e historial de cumplimiento.
+- **Previsiones** del saldo a 7, 15 y 30 días, fin de mes, mes siguiente, 3 y 6 meses, con **tres escenarios**, gráfico histórico + previsto, **indicador de fiabilidad** y alertas («tu saldo podría bajar de 100 € el día 25»).
+- **¿Puedo permitirme esta compra?**: simulador de compras únicas o mensuales con riesgo de liquidez y comparación de varias compras.
+- **Asistente**: chat en lenguaje natural («¿cuánto he gastado en restaurantes?», «¿puedo comprar algo de 900 €?», «¿cómo ahorro 200 € al mes?»…), **consejos** con datos, ahorro potencial y prioridad, y **alertas** de duplicados, gastos anormales, fechas futuras y subidas de una categoría.
+- **Escáner de tickets** con pantalla de revisión, aviso de duplicados e **historial con fotos**.
+- **Informes** por semana, mes, trimestre, año o fechas: categorías, establecimientos, evolución, comparación interanual, recurrentes, presupuestos y recomendaciones. Descarga en **PDF, CSV y Excel**.
+- **Avisos dentro de la app** (campana) y por correo: facturas, presupuestos, anomalías, saldo bajo, resumen semanal, informe mensual y objetivos de ahorro. Se elige cuáles recibir.
+- **Ahorros** en huchas con objetivo.
+- **Bienvenida** guiada (cuenta, categorías, ingresos, presupuesto y ahorro; todos los pasos se pueden saltar) y **datos de demostración** separados de los reales.
+- **Tus datos**: descargar todo (JSON), exportar movimientos y eliminar la cuenta con todo su contenido.
 
 ## Arquitectura (todo gratis)
 
@@ -78,7 +89,9 @@ server/     API (Express), base de datos (PostgreSQL o JSON), correos y avisos
 public/     Interfaz web + PWA (la usan también el móvil y el escritorio)
 desktop/    App de escritorio (Electron) y empaquetado
 .github/    Tareas automáticas (avisos y compilación del escritorio)
-render.yaml Despliegue en Render
+render.yaml          Despliegue de producción en Render
+render.pruebas.yaml  Despliegue del entorno de pruebas (rama «pruebas»)
+test/                Pruebas automáticas (npm test)
 ```
 
 ## Seguridad
@@ -100,9 +113,65 @@ render.yaml Despliegue en Render
 - **Ajustes de la app**: abrir o cerrar el registro de usuarios y publicar un aviso para todos.
 - Todas las acciones quedan en el **registro de acciones**. El administrador **no ve los gastos ni los ingresos** de los usuarios, solo cuántos registros tienen.
 
-## Escanear tickets
+## Escáner de tickets
 
-Botón **Escanear ticket** (arriba en el ordenador, icono de escáner en el móvil, y dentro de «Nuevo gasto»). Se hace una foto al ticket y el gasto **se guarda automáticamente con fecha de hoy**, con importe, tienda, categoría y artículos en las notas. Después se abre para revisarlo y cambiar lo que haga falta (si el ticket tiene otra fecha, aparece un botón para usarla).
+Botón **Escanear ticket** (arriba en el ordenador, icono de escáner en el móvil, en «Nuevo gasto» y en la sección *Escáner de tickets*). Se hace una foto o se elige de la galería (JPG, PNG o HEIC si el móvil lo abre).
 
-- **Gratis por defecto:** la foto se lee en el propio dispositivo con OCR (Tesseract) y unas reglas para tickets españoles. No se envía a ningún sitio.
-- **Opcional, con IA (de pago):** si en Render añades la variable `ANTHROPIC_API_KEY` (clave de https://console.anthropic.com), el servidor usa Claude Opus 5.5 para leer el ticket, con mucha más precisión. Cuesta aproximadamente 1-2 céntimos por ticket. Si la IA falla, la app usa automáticamente el lector gratuito.
+1. La app lee el **establecimiento, importe, fecha, hora, CIF/NIF, IVA, forma de pago, número de ticket y productos**. Lo que no aparece se deja vacío.
+2. Muestra una **pantalla de revisión** con la foto, la **confianza de la lectura** y un aviso si parece un **duplicado** (no bloquea: puede ser otra compra igual).
+3. Solo al pulsar **Guardar gasto** se crea el movimiento y se guarda la foto como justificante (privada: solo la ve su dueño).
+4. En el **historial** puedes buscar por establecimiento, filtrar por fechas y categoría, ver y descargar la foto, editar el gasto o eliminar el ticket.
+
+- **Gratis por defecto:** la foto se lee en el propio dispositivo con OCR (Tesseract) y reglas para tickets españoles.
+- **Opcional, con IA (de pago):** con la variable `ANTHROPIC_API_KEY` el servidor usa Claude para leer el ticket. Si la IA falla, se usa el lector gratuito.
+
+## Asistente e inteligencia
+
+El asistente funciona **gratis y sin IA externa**: entiende la pregunta con reglas en español, consulta tus datos y **calcula las cifras en el servidor**. Así nunca inventa cantidades. Separación:
+
+1. Consulta de datos (`server/ledger.js`) → 2. Cálculo financiero (`ledger.js`, `forecast.js`, `insights.js`) → 3. Interpretación (`assistant.js`) → 4. Presentación (`public/plan.js`).
+
+Si añades `ANTHROPIC_API_KEY`, las preguntas que las reglas no entienden se envían a Claude **solo con cifras agregadas** (sin nombres, correos ni conceptos) y con la orden de usar únicamente esos números. Variables opcionales: `ASSISTANT_MODEL` y `RECEIPT_MODEL` (por defecto `claude-opus-5-5`). Si la IA no está disponible, todo lo demás sigue funcionando.
+
+## Entorno de pruebas (para no tocar producción)
+
+| Rama | Se publica en | Datos |
+|---|---|---|
+| `main` | https://agenda-gastos.onrender.com (**producción**) | Neon (permanentes) |
+| `pruebas` | https://agenda-gastos-pruebas.onrender.com (**pruebas**) | Archivo temporal: se borran en cada actualización |
+
+Forma de trabajar:
+
+1. Los cambios se suben a la rama **`pruebas`**. GitHub ejecuta las **pruebas automáticas** (`.github/workflows/pruebas.yml`) y Render publica la web de pruebas, que muestra el aviso «Entorno de PRUEBAS».
+2. Se prueba allí con una cuenta de prueba y, si hace falta, con **datos de demostración** (Ajustes).
+3. Cuando todo está bien, se abre una *pull request* de `pruebas` a `main` (vuelven a pasar las pruebas) y al unirla se actualiza producción.
+
+Crear la web de pruebas en Render (una sola vez): **New → Blueprint →** repositorio `agenda-gastos` **→ rama `pruebas` → Blueprint path `render.pruebas.yaml` → Apply**. Ojo: el plan gratuito de Render reparte 750 horas al mes entre todos tus servicios; la web de pruebas se duerme sola cuando no se usa, así que apenas consume.
+
+## Pruebas automáticas
+
+```powershell
+npm test
+```
+Arranca el servidor con una base de datos temporal y comprueba: repeticiones (meses cortos y bisiestos), cuentas y transferencias, **aislamiento entre usuarios**, pagos fijos sin duplicados, presupuestos y avisos, previsiones y simulador, asistente (que no invente cifras), tickets con fotos privadas, anomalías, informes y exportaciones, datos de demostración y borrado de cuenta.
+
+## Copias de seguridad
+
+- **Cada usuario** puede descargar todos sus datos en *Ajustes → Tus datos* (JSON) y sus movimientos en CSV o Excel.
+- **Base de datos completa (Neon)**: Neon guarda el historial de cambios y permite restaurar a un momento anterior (*Branches → Restore*). Para una copia manual:
+  ```powershell
+  pg_dump "CADENA_DE_CONEXION_DE_NEON" -Fc -f copia-agenda.dump
+  ```
+  y para restaurarla: `pg_restore -d "CADENA_DE_CONEXION" --clean copia-agenda.dump`.
+- Los datos están en las tablas `app_state` (todo menos las fotos) y `blobs` (fotos de tickets).
+- En local, basta con copiar la carpeta `data/`.
+
+## Manual básico de uso
+
+1. **Regístrate** y sigue la bienvenida: añade tu cuenta principal con su saldo, tus ingresos mensuales y, si quieres, un presupuesto y un objetivo de ahorro.
+2. **Apunta gastos** con «Nuevo gasto» o **escanea el ticket**. Los ingresos, en *Ingresos*.
+3. Añade tus **pagos fijos** (alquiler, luz, suscripciones…) para recibir avisos y que cuenten en las previsiones.
+4. Pon **presupuestos** (o acepta los sugeridos) y mira cómo vas en *Presupuestos*.
+5. Consulta **Previsiones** para saber cuánto tendrás y usa el simulador antes de una compra grande.
+6. Pregunta lo que quieras al **Asistente** y revisa sus **consejos** y **alertas**.
+7. Descarga tus **informes** en PDF, CSV o Excel cuando los necesites.

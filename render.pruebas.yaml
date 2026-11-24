@@ -1,0 +1,23 @@
+# Entorno de PRUEBAS en Render (gratis), separado de producción.
+# Se despliega solo desde la rama «pruebas» y guarda los datos en un archivo temporal:
+# se borran en cada actualización, así nunca se mezclan con los datos reales.
+# Crear: Render > New > Blueprint > repositorio agenda-gastos > rama «pruebas» > Blueprint path: render.pruebas.yaml
+services:
+  - type: web
+    name: agenda-gastos-pruebas
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: pruebas
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: APP_ENV
+        value: pruebas
+      - key: APP_SECRET
+        generateValue: true
+      - key: MAIL_FROM_NAME
+        value: Agenda de Gastos (pruebas)

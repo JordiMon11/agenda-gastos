@@ -35,4 +35,4 @@ const DAY_NAMES = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábad
 const fmtLong = (d) =>
   d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
-module.exports = { pad, ymd, monthKey, isYmd, parse, today, addDays, diffDays, weekStart, dueInMonth, nextDue, DAY_NAMES, fmtLong };
+module.exports = { pad, ymd, monthKey, isYmd, parse, today, addDays, diffDays, weekStart, daysInMonth, dueInMonth, nextDue, DAY_NAMES, fmtLong };

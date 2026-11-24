@@ -15,6 +15,9 @@ const UI = [
   'shield', 'shield-alert', 'key-round', 'fingerprint', 'qr-code', 'copy', 'log-in', 'history', 'circle-alert', 'arrow-down-left',
   'target', 'file-spreadsheet', 'eye', 'eye-off', 'arrow-up-down', 'arrow-up', 'arrow-down', 'circle-plus', 'circle-minus', 'globe', 'lock-keyhole',
   'badge-check', 'circle-x', 'coins', 'landmark', 'chart-column', 'scale',
+  'star', 'sliders-horizontal', 'gauge', 'chart-line', 'bell-ring', 'calculator', 'send-horizontal', 'message-circle', 'eraser', 'bot',
+  'arrow-left-right', 'wallet-cards', 'file-text', 'check-check', 'bell-off', 'rocket', 'flask-conical', 'printer', 'receipt', 'credit-card',
+  'hand-coins', 'lightbulb', 'copy-plus', 'list-filter',
   'scan-line', 'camera', 'image',
   'users', 'user-plus', 'user-x', 'user-check', 'user-cog', 'crown', 'ban', 'megaphone', 'rotate-ccw', 'mail-check', 'lock-open', 'database', 'server', 'clipboard-list', 'user-pen',
 ];

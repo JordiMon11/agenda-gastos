@@ -4,8 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Agenda de Gastos</title>
-  <meta name="theme-color" content="#4f46e5" />
-  <meta name="description" content="Apunta tus gastos, mira en qué y dónde gastas y recibe avisos de tus gastos mensuales." />
+  <meta name="theme-color" content="#1e3a8a" />
+  <meta name="description" content="Tu centro de control financiero: gastos, ingresos, cuentas, presupuestos, previsiones, escáner de tickets y asistente." />
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" type="image/png" href="/icons/favicon-32.png" />
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
@@ -29,8 +29,8 @@
         <p class="lead">Apunta tus gastos en segundos, mira gráficos claros y recibe un correo antes de cada cobro mensual.</p>
         <div class="features">
           <div class="feature"><span class="fi"><i data-i="chart-pie"></i></span><div><b>Gráficos y resúmenes</b><small>Por categoría, por día y por lugar</small></div></div>
-          <div class="feature"><span class="fi"><i data-i="bell"></i></span><div><b>Avisos por correo</b><small>Antes de cada gasto mensual</small></div></div>
-          <div class="feature"><span class="fi"><i data-i="calendar-days"></i></span><div><b>Calendario</b><small>Cada día con su total</small></div></div>
+          <div class="feature"><span class="fi"><i data-i="chart-line"></i></span><div><b>Previsiones</b><small>Cuánto tendrás a fin de mes</small></div></div>
+          <div class="feature"><span class="fi"><i data-i="scan-line"></i></span><div><b>Escáner de tickets</b><small>Una foto y listo</small></div></div>
           <div class="feature"><span class="fi"><i data-i="smartphone"></i></span><div><b>Móvil, web y ordenador</b><small>Siempre sincronizado</small></div></div>
         </div>
       </div>
@@ -81,15 +81,24 @@
       <nav class="nav" id="nav">
         <div class="nav-group">
           <div class="nav-label">General</div>
-          <a href="#/dashboard" data-view="dashboard"><i data-i="layout-dashboard"></i>Panel</a>
-          <a href="#/gastos" data-view="gastos"><i data-i="receipt-text"></i>Gastos</a>
+          <a href="#/dashboard" data-view="dashboard"><i data-i="layout-dashboard"></i>Inicio</a>
+          <a href="#/gastos" data-view="gastos"><i data-i="receipt-text"></i>Movimientos</a>
           <a href="#/ingresos" data-view="ingresos"><i data-i="hand-coins"></i>Ingresos</a>
           <a href="#/calendario" data-view="calendario"><i data-i="calendar-days"></i>Calendario</a>
+          <a href="#/cuentas" data-view="cuentas"><i data-i="landmark"></i>Cuentas</a>
         </div>
         <div class="nav-group">
           <div class="nav-label">Planificación</div>
-          <a href="#/mensuales" data-view="mensuales"><i data-i="repeat"></i>Gastos mensuales<span class="count hidden" id="dueCount"></span></a>
+          <a href="#/presupuestos" data-view="presupuestos"><i data-i="target"></i>Presupuestos</a>
+          <a href="#/mensuales" data-view="mensuales"><i data-i="repeat"></i>Pagos fijos<span class="count hidden" id="dueCount"></span></a>
+          <a href="#/previsiones" data-view="previsiones"><i data-i="chart-line"></i>Previsiones</a>
           <a href="#/ahorros" data-view="ahorros"><i data-i="piggy-bank"></i>Ahorros</a>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">Inteligencia</div>
+          <a href="#/asistente" data-view="asistente"><i data-i="bot"></i>Asistente IA</a>
+          <a href="#/tickets" data-view="tickets"><i data-i="scan-line"></i>Escáner de tickets</a>
+          <a href="#/informes" data-view="informes"><i data-i="file-text"></i>Informes</a>
           <a href="#/semanal" data-view="semanal"><i data-i="calendar-range"></i>Resumen semanal</a>
         </div>
         <div class="nav-group">
@@ -110,6 +119,7 @@
 
     <div class="mobile-bar">
       <div class="brand"><span class="logo"><i data-i="wallet"></i></span>Agenda de Gastos</div>
+      <button class="icon-btn notif-btn" id="notifMobile" title="Avisos"><i data-i="bell"></i><span class="notif-count hidden"></span></button>
       <button class="icon-btn" id="btnScanMobile" title="Escanear ticket"><i data-i="scan-line"></i></button>
       <a href="#/ajustes" class="avatar" id="avatarMobile" title="Ajustes"></a>
     </div>
@@ -122,6 +132,7 @@
           <div class="subtitle" id="viewSubtitle"></div>
         </div>
         <div class="actions">
+          <button class="icon-btn notif-btn" id="notifBtn" title="Avisos"><i data-i="bell"></i><span class="notif-count hidden"></span></button>
           <button class="icon-btn" id="themeBtn" title="Cambiar tema"><i data-i="moon"></i></button>
           <button class="btn btn-scan" id="btnScan"><i data-i="scan-line"></i>Escanear ticket</button>
           <button class="btn primary btn-add" id="btnAdd"><i data-i="plus"></i><span id="btnAddTxt">Nuevo gasto</span></button>
@@ -131,10 +142,10 @@
     </main>
 
     <nav class="tabbar" id="tabbar">
-      <a href="#/dashboard" data-view="dashboard"><i data-i="layout-dashboard"></i>Panel</a>
-      <a href="#/gastos" data-view="gastos"><i data-i="receipt-text"></i>Gastos</a>
+      <a href="#/dashboard" data-view="dashboard"><i data-i="layout-dashboard"></i>Inicio</a>
+      <a href="#/gastos" data-view="gastos"><i data-i="receipt-text"></i>Movimientos</a>
       <button class="tab-add" id="fabAdd" aria-label="Nuevo gasto"><span class="plus"><i data-i="plus"></i></span></button>
-      <a href="#/ingresos" data-view="ingresos"><i data-i="hand-coins"></i>Ingresos</a>
+      <a href="#/asistente" data-view="asistente"><i data-i="bot"></i>Asistente</a>
       <button id="moreBtn" data-view="more"><i data-i="ellipsis"></i>Más</button>
     </nav>
   </div>
@@ -158,6 +169,7 @@
   <datalist id="placesList"></datalist>
   <div id="toast"></div>
   <script src="/app.js"></script>
+  <script src="/plan.js"></script>
   <script src="/receipt.js"></script>
 </body>
 </html>

@@ -41,11 +41,18 @@ function weekSummary(userId, dateStr) {
 
   const top = list.reduce((m, e) => (!m || e.amount > m.amount ? e : m), null);
 
+  const incomes = db.incomes.filter((i) => i.userId === userId && i.date >= from && i.date <= to);
+  const incomeTotal = sum(incomes);
+  const prevIncome = sum(db.incomes.filter((i) => i.userId === userId && i.date >= prevFrom && i.date <= prevTo));
   return {
     from,
     to,
     total,
     prevTotal,
+    incomeTotal,
+    prevIncome,
+    balance: round(incomeTotal - total),
+    incomes: incomes.sort((a, b) => a.date.localeCompare(b.date)),
     count: list.length,
     avgPerDay: round(total / 7),
     byCategory: [...byCat.values()].sort((a, b) => b.total - a.total),

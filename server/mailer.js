@@ -101,7 +101,7 @@ function welcomeEmail(user) {
       `Hola, ${esc(user.name)}`,
       `<p style="margin:0 0 14px">Tu cuenta ha quedado vinculada a este correo. A partir de ahora recibirás aquí:</p>
        <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 18px">
-        <tr><td style="padding:6px 0">${dot('#4f46e5')}<b>Avisos</b> antes de que llegue cada gasto mensual.</td></tr>
+        <tr><td style="padding:6px 0">${dot('#4f46e5')}<b>Avisos</b> antes de que llegue cada pago fijo.</td></tr>
         <tr><td style="padding:6px 0">${dot('#16a34a')}<b>Un resumen semanal</b> cada lunes con lo que has gastado.</td></tr>
        </table>
        ${button('Abrir mi agenda')}`
@@ -117,7 +117,7 @@ function reminderEmail(user, rec, due, daysLeft, cat) {
     html: layout(
       `${rec.name} se cobra ${whenShort}`,
       `${esc(rec.name)} se cobra ${whenShort}`,
-      `<p style="margin:0 0 6px">Hola ${esc(user.name)}, te recordamos que se acerca este gasto mensual:</p>
+      `<p style="margin:0 0 6px">Hola ${esc(user.name)}, te recordamos que se acerca este pago:</p>
        <div style="font-size:34px;font-weight:800;color:#4f46e5;letter-spacing:-.5px;margin:12px 0 6px">${eur(rec.amount)}</div>
        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 18px;font-size:14px">
         ${row('Concepto', esc(rec.name))}
@@ -126,7 +126,7 @@ function reminderEmail(user, rec, due, daysLeft, cat) {
         ${rec.place ? row('Dónde', esc(rec.place)) : ''}
        </table>
        <p style="margin:0 0 4px;color:#6b7280;font-size:13px">Asegúrate de tener saldo suficiente en la cuenta.</p>
-       ${button('Ver mis gastos mensuales')}`
+       ${button('Ver mis pagos fijos')}`
     ),
   };
 }

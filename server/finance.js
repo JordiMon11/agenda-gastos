@@ -32,7 +32,8 @@ function cleanIncome(b) {
   const name = String(b?.name || '').trim().slice(0, 100);
   if (!name) throw new HttpError(400, 'El ingreso necesita un concepto');
   if (!D.isYmd(b.date)) throw new HttpError(400, 'Fecha no válida');
-  return { name, amount: money(b.amount), date: b.date, source: SOURCES[b.source] ? b.source : 'otros', notes: String(b.notes || '').slice(0, 500) };
+  if (b.accountId && !db.accounts.some((a) => a.id === b.accountId && a.userId === b._uid)) throw new HttpError(400, 'Cuenta no válida');
+  return { name, amount: money(b.amount), date: b.date, source: SOURCES[b.source] ? b.source : 'otros', notes: String(b.notes || '').slice(0, 500), accountId: b.accountId || null };
 }
 router.get('/incomes', (req, res) => {
   const { from, to, source, q } = req.query;
@@ -44,14 +45,14 @@ router.get('/incomes', (req, res) => {
   res.json(list.sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || '').localeCompare(a.createdAt || '')));
 });
 router.post('/incomes', h(async (req, res) => {
-  const e = { id: store.id(), userId: req.user.id, ...cleanIncome(req.body), createdAt: new Date().toISOString() };
+  const e = { id: store.id(), userId: req.user.id, ...cleanIncome({ ...req.body, _uid: req.user.id }), createdAt: new Date().toISOString() };
   db.incomes.push(e);
   store.save();
   res.json(e);
 }));
 router.put('/incomes/:id', h(async (req, res) => {
   const e = findMine(db.incomes, req);
-  Object.assign(e, cleanIncome(req.body));
+  Object.assign(e, cleanIncome({ ...req.body, _uid: req.user.id }));
   store.save();
   res.json(e);
 }));

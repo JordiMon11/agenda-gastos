@@ -182,11 +182,7 @@ router.delete('/users/:id', h(async (req, res) => {
   if (String(req.body?.confirmEmail || '').trim().toLowerCase() !== u.email) throw new HttpError(400, 'Escribe el correo del usuario para confirmar');
   if (A.isAdmin(u) && adminCount() <= 1) throw new HttpError(400, 'Debe quedar al menos un administrador');
   audit(req, 'Cuenta eliminada', u, `${userRow(u).counts.expenses} gastos, ${userRow(u).counts.incomes} ingresos`);
-  for (const k of ['sessions', 'categories', 'expenses', 'recurring', 'incomes', 'savings', 'savingMoves', 'securityLog', 'passwordResets']) {
-    db[k] = db[k].filter((x) => x.userId !== u.id);
-  }
-  db.users = db.users.filter((x) => x.id !== u.id);
-  store.save();
+  await store.deleteUserData(u.id);
   res.json({ ok: true });
 }));
 

@@ -127,6 +127,7 @@ document.addEventListener('click', (e) => {
   if (act === 'new-income') incomeForm();
   if (act === 'new-saving') savingForm();
   if (act === 'retry') route();
+  if (act === 'onboarding') onboarding();
 });
 
 // ---------- Tema ----------
@@ -138,7 +139,7 @@ function applyTheme(pref) {
   if (pref === 'system') delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = pref;
   $('#themeBtn').innerHTML = ic(isDark() ? 'sun' : 'moon');
-  document.querySelector('meta[name=theme-color]').content = isDark() ? '#0c0e17' : '#4f46e5';
+  document.querySelector('meta[name=theme-color]').content = isDark() ? '#0c0e17' : '#1e3a8a';
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (themePref() === 'system') { applyTheme('system'); route(); } });
 
@@ -174,6 +175,7 @@ let modalSubmit = null;
 let modalLocked = false;
 function openModal({ title, icon = '', html, onSubmit, okText = 'Guardar', danger = false, actions = true, locked = false }) {
   modalLocked = locked;
+  $('#modalBody').className = '';
   $('#modalClose').classList.toggle('hidden', locked);
   $('#modalTitle').textContent = title;
   $('#modalIcon').innerHTML = icon ? `<span class="ichip sm ${danger ? 'red' : ''}">${ic(icon)}</span>` : '';
@@ -231,21 +233,15 @@ async function loadPlaces() {
 }
 
 // ---------- Formularios ----------
-function expenseForm(exp = {}, preset = {}, extra = {}) {
+function expenseForm(exp = {}, preset = {}) {
   loadPlaces();
-  const scan = extra.scan;
-  if (!exp.id && extra.prefill) exp = { ...extra.prefill, ...exp };
-  const scanBanner = scan
-    ? `<div class="notice ${scan.saved ? 'ok' : 'warn'}" style="margin-bottom:16px">${ic(scan.saved ? 'sparkles' : 'triangle-alert', 'sm')}<span>${scan.saved
-        ? `<b>Añadido automáticamente</b> desde la foto del ticket (${scan.source === 'ai' ? 'leído con IA' : 'leído en tu dispositivo'}). Revisa los datos y cambia lo que quieras.`
-        : '<b>No he podido leer el total del ticket.</b> Escribe el importe y revisa el resto de datos.'}${scan.uncertain && scan.saved ? ' Comprueba el importe: no estaba del todo claro.' : ''}</span></div>
-      ${scan.saved ? '' : '<input type="hidden" name="scanned" value="1">'}
-      ${scan.ticketDate ? `<div class="scan-date">${ic('calendar-days', 'sm')}<span>El ticket es del <b>${fmtDate(scan.ticketDate, { day: 'numeric', month: 'long', year: 'numeric' })}</b></span><button type="button" class="btn sm" id="useTicketDate">Usar esa fecha</button></div>` : ''}`
-    : !exp.id ? `<button type="button" class="btn full scan-btn" id="scanInForm">${ic('scan-line', 'sm')}Escanear un ticket con la cámara</button>` : '';
+  const more = !!(exp.accountId || exp.paymentMethod || exp.tags?.length || exp.notes);
   openModal({
-    title: scan?.saved ? 'Gasto del ticket' : exp.id ? 'Editar gasto' : 'Nuevo gasto',
-    icon: scan ? 'scan-line' : exp.id ? 'pencil' : 'receipt-text',
-    html: `${scanBanner}
+    title: exp.id ? 'Editar gasto' : 'Nuevo gasto',
+    icon: exp.id ? 'pencil' : 'receipt-text',
+    html: `${!exp.id ? `<button type="button" class="btn full scan-btn" id="scanInForm">${ic('scan-line', 'sm')}Escanear un ticket con la cámara</button>` : ''}
+      ${exp.receiptId ? `<div class="notice ok" style="margin-bottom:14px">${ic('receipt', 'sm')}<span>Gasto creado desde un ticket escaneado. <a href="#/tickets" id="goTickets">Ver el ticket</a></span></div>` : ''}
+      ${exp.demo ? `<div class="notice warn" style="margin-bottom:14px">${ic('flask-conical', 'sm')}<span>Dato de demostración</span></div>` : ''}
       <label class="field">Importe
         <div class="input-money"><input name="amount" type="number" inputmode="decimal" step="0.01" min="0.01" required value="${exp.amount ?? ''}" placeholder="0,00"><span>€</span></div>
       </label>
@@ -255,57 +251,76 @@ function expenseForm(exp = {}, preset = {}, extra = {}) {
         <label class="field">Fecha<input name="date" type="date" required value="${exp.date || preset.date || ymd(todayD())}"></label>
         <label class="field">¿Dónde?<div class="input-icon"><i data-i="map-pin"></i><input name="place" list="placesList" maxlength="100" value="${esc(exp.place || '')}" placeholder="Tienda, web, lugar…"></div></label>
       </div>
-      <label class="field">Notas<textarea name="notes" maxlength="500" placeholder="Opcional">${esc(exp.notes || '')}</textarea></label>
-      ${exp.id ? `<button type="button" class="btn danger sm" id="delInModal">${ic('trash-2', 'sm')}Eliminar gasto</button>` : ''}`,
+      <details class="more-fields" ${more ? 'open' : ''}><summary>${ic('chevron-down', 'sm')}Más detalles: cuenta, método de pago, etiquetas y notas</summary>
+        <div class="row">
+          ${accountSelect(exp.accountId || '')}
+          <label class="field">Método de pago<select name="paymentMethod"><option value="">—</option>${Object.entries(PAY_METHODS).map(([k, l]) => `<option value="${k}" ${exp.paymentMethod === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        </div>
+        <label class="field">Etiquetas<input name="tags" maxlength="200" value="${esc((exp.tags || []).join(', '))}" placeholder="Ej: vacaciones, trabajo (separadas por comas)"></label>
+        <label class="field">Notas<textarea name="notes" maxlength="500" placeholder="Opcional">${esc(exp.notes || '')}</textarea></label>
+      </details>
+      ${exp.id ? `<div class="form-extra"><button type="button" class="btn sm" id="dupInModal">${ic('copy-plus', 'sm')}Duplicar</button><button type="button" class="btn danger sm" id="delInModal">${ic('trash-2', 'sm')}Eliminar gasto</button></div>` : ''}`,
     onSubmit: async (d) => {
       d.amount = Number(d.amount);
       if (exp.id) await api('/expenses/' + exp.id, { method: 'PUT', body: d });
       else await api('/expenses', { method: 'POST', body: d });
       toast(exp.id ? 'Gasto actualizado' : 'Gasto añadido');
       route();
+      refreshNotifs();
     },
   });
   bindCatPicker($('#modalBody'));
   $('#delInModal')?.addEventListener('click', () => deleteExpense(exp));
-  $('#scanInForm')?.addEventListener('click', () => { closeModal(); pickReceipt(); });
-  $('#useTicketDate')?.addEventListener('click', (e) => {
-    $('#modalBody input[name=date]').value = scan.ticketDate;
-    e.currentTarget.disabled = true;
-    e.currentTarget.textContent = 'Fecha cambiada';
+  $('#dupInModal')?.addEventListener('click', async () => {
+    try { await api(`/expenses/${exp.id}/duplicate`, { method: 'POST', body: { date: ymd(todayD()) } }); closeModal(); toast('Gasto duplicado con fecha de hoy'); route(); } catch (e) { toast(e.message, true); }
   });
+  $('#goTickets')?.addEventListener('click', closeModal);
+  $('#scanInForm')?.addEventListener('click', () => { closeModal(); pickReceipt(); });
 }
 
 function recurringForm(rec = {}) {
   loadPlaces();
+  const freq = rec.frequency || 'monthly';
   openModal({
-    title: rec.id ? 'Editar gasto mensual' : 'Nuevo gasto mensual',
+    title: rec.id ? 'Editar pago fijo' : 'Nuevo pago fijo',
     icon: 'repeat',
     html: `
-      <label class="field">Importe al mes
+      <label class="field">Importe
         <div class="input-money"><input name="amount" type="number" inputmode="decimal" step="0.01" min="0.01" required value="${rec.amount ?? ''}" placeholder="0,00"><span>€</span></div>
       </label>
-      <label class="field">Concepto<input name="name" required maxlength="100" value="${esc(rec.name || '')}" placeholder="Alquiler, Netflix, gimnasio…"></label>
+      <label class="field">Concepto<input name="name" required maxlength="100" value="${esc(rec.name || '')}" placeholder="Alquiler, luz, seguro, Netflix…"></label>
       ${catPicker(rec.categoryId)}
       <div class="row">
-        <label class="field">Día de cobro<input name="dayOfMonth" type="number" min="1" max="31" required value="${rec.dayOfMonth ?? 1}"></label>
-        <label class="field">Avisar (días antes)<input name="remindDaysBefore" type="number" min="0" max="30" required value="${rec.remindDaysBefore ?? 3}"></label>
+        <label class="field">Se repite<select name="frequency" id="recFreq">${FREQ_OPTS.map(([k, l]) => `<option value="${k}" ${freq === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label class="field">${rec.id ? 'Fecha de referencia' : 'Primer cobro'}<input name="anchorDate" type="date" required value="${rec.anchorDate || rec.nextDue || ymd(todayD())}"></label>
       </div>
-      <label class="field">¿Quién cobra?<div class="input-icon"><i data-i="store"></i><input name="place" list="placesList" maxlength="100" value="${esc(rec.place || '')}" placeholder="Banco, Netflix…"></div></label>
-      <label class="switch-row"><span class="ichip sm amber">${ic('zap', 'sm')}</span><span class="txt"><b>Registro automático</b><small>Se añade a tus gastos el día del cobro</small></span>
+      <div class="row ${freq === 'custom' ? '' : 'hidden'}" id="recCustom">
+        <label class="field">Cada<input name="every" type="number" min="1" max="365" value="${rec.every || 2}"></label>
+        <label class="field">Unidad<select name="unit"><option value="months" ${rec.unit !== 'days' ? 'selected' : ''}>meses</option><option value="days" ${rec.unit === 'days' ? 'selected' : ''}>días</option></select></label>
+      </div>
+      <p class="set-desc" style="margin-top:-6px">Si el día no existe en un mes (p. ej. el 31), se cobra el último día de ese mes.</p>
+      <div class="row">
+        <label class="field">Avisar<select name="remindDaysBefore">${[[0, 'El mismo día'], [1, 'Un día antes'], [3, 'Tres días antes'], [7, 'Una semana antes']].map(([v, l]) => `<option value="${v}" ${(rec.remindDaysBefore ?? 3) === v ? 'selected' : ''}>${l}</option>`).join('')}
+          ${![0, 1, 3, 7].includes(rec.remindDaysBefore ?? 3) ? `<option value="${rec.remindDaysBefore}" selected>${rec.remindDaysBefore} días antes</option>` : ''}</select></label>
+        ${accountSelect(rec.accountId || '') || `<label class="field">¿Quién cobra?<div class="input-icon"><i data-i="store"></i><input name="place" list="placesList" maxlength="100" value="${esc(rec.place || '')}" placeholder="Banco, Netflix…"></div></label>`}
+      </div>
+      ${accs.length ? `<label class="field">¿Quién cobra?<div class="input-icon"><i data-i="store"></i><input name="place" list="placesList" maxlength="100" value="${esc(rec.place || '')}" placeholder="Banco, Netflix…"></div></label>` : ''}
+      <label class="switch-row"><span class="ichip sm amber">${ic('zap', 'sm')}</span><span class="txt"><b>Registro automático</b><small>Se añade a tus gastos el día del cobro (domiciliaciones)</small></span>
         <span class="switch"><input type="checkbox" name="autoAdd" ${rec.autoAdd ?? true ? 'checked' : ''}><span></span></span></label>
-      <label class="switch-row"><span class="ichip sm green">${ic('circle-check', 'sm')}</span><span class="txt"><b>Activo</b><small>Si lo desactivas no recibirás avisos</small></span>
+      <label class="switch-row"><span class="ichip sm green">${ic('circle-check', 'sm')}</span><span class="txt"><b>Activo</b><small>Desactívalo si lo pausas o lo cancelas</small></span>
         <span class="switch"><input type="checkbox" name="active" ${rec.active ?? true ? 'checked' : ''}><span></span></span></label>`,
     onSubmit: async (d) => {
       d.amount = Number(d.amount);
-      d.dayOfMonth = Number(d.dayOfMonth);
       d.remindDaysBefore = Number(d.remindDaysBefore);
+      d.every = Number(d.every);
       if (rec.id) await api('/recurring/' + rec.id, { method: 'PUT', body: d });
       else await api('/recurring', { method: 'POST', body: d });
-      toast('Gasto mensual guardado');
+      toast('Pago fijo guardado');
       route();
     },
   });
   bindCatPicker($('#modalBody'));
+  $('#recFreq').onchange = (e) => $('#recCustom').classList.toggle('hidden', e.target.value !== 'custom');
 }
 
 const PALETTE = ['#f97316', '#ef4444', '#db2777', '#9333ea', '#7c3aed', '#4f46e5', '#2563eb', '#0891b2', '#0d9488', '#16a34a', '#65a30d', '#ca8a04', '#a16207', '#64748b'];
@@ -357,7 +372,7 @@ function deleteExpense(e) {
 
 const expenseRow = (e, { actions = false, date = true } = {}) => {
   const c = catOf(e.categoryId);
-  const meta = [date ? fmtDate(e.date) : '', esc(c.name), e.place ? `${ic('map-pin')}${esc(e.place)}` : '', e.recurringId ? `${ic('repeat')}Mensual` : '', e.scanned ? `${ic('scan-line')}Ticket` : '']
+  const meta = [date ? fmtDate(e.date) : '', esc(c.name), e.place ? `${ic('map-pin')}${esc(e.place)}` : '', e.recurringId ? `${ic('repeat')}Fijo` : '', e.scanned ? `${ic('scan-line')}Ticket` : '', e.accountId && typeof accOf === 'function' && accOf(e.accountId) ? `${ic('landmark')}${esc(accOf(e.accountId).name)}` : '', ...(e.tags || []).slice(0, 3).map((t) => `#${esc(t)}`), e.demo ? '<span class="badge warn sm">Demo</span>' : '']
     .filter(Boolean)
     .join('<span class="dot-sep"></span>');
   return `<div class="li click" data-id="${e.id}">
@@ -406,128 +421,139 @@ const state = { month: monthKey(todayD()), cat: '', q: '', calMonth: monthKey(to
 // ---------- Panel ----------
 async function renderDashboard(el) {
   const t = todayD();
-  const from = ymd(new Date(t.getFullYear(), t.getMonth() - 5, 1));
-  const to = ymd(new Date(t.getFullYear(), t.getMonth() + 1, 0));
-  const [exps, recs, incs, savs] = await Promise.all([api(`/expenses?from=${from}&to=${to}`), api('/recurring'), api(`/incomes?from=${ymd(new Date(t.getFullYear(), t.getMonth(), 1))}&to=${to}`), api('/savings')]);
-  updateDueBadge(recs);
   const mk = monthKey(t);
-  const incTotal = sum(incs);
-  const savTotal = savs.reduce((a, s) => a + s.balance, 0);
-  const savMonth = savs.reduce((a, s) => a + s.month, 0);
+  const [ov, exps, incs, recs] = await Promise.all([
+    api('/overview'),
+    api(`/expenses?from=${ymd(addDays(t, -40))}&to=${ymd(addDays(t, 60))}`),
+    api(`/incomes?from=${ymd(addDays(t, -40))}&to=${ymd(t)}`),
+    api('/recurring'),
+  ]);
+  updateDueBadge(recs);
+  const m = ov.money;
   const prevD = new Date(t.getFullYear(), t.getMonth() - 1, 1);
+  const diff = pct(ov.monthExpenses, ov.prevMonthExpenses);
   const monthExp = exps.filter((e) => e.date.startsWith(mk));
-  const monthTotal = sum(monthExp);
-  const prevTotal = sum(exps.filter((e) => e.date.startsWith(monthKey(prevD))));
-  const ws = weekStart(t);
-  const weekTotal = sum(exps.filter((e) => e.date >= ymd(ws) && e.date <= ymd(addDays(ws, 6))));
-  const prevWeekTotal = sum(exps.filter((e) => e.date >= ymd(addDays(ws, -7)) && e.date < ymd(ws)));
-  const dim = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate();
-  const avg = monthTotal / t.getDate();
-  const active = recs.filter((r) => r.active);
-  const fixed = active.reduce((a, r) => a + r.amount, 0);
-  const paid = active.filter((r) => r.paidThisMonth).reduce((a, r) => a + r.amount, 0);
-
   const byCat = {};
   for (const e of monthExp) byCat[e.categoryId || ''] = (byCat[e.categoryId || ''] || 0) + e.amount;
   const catItems = Object.entries(byCat).map(([id, total]) => ({ ...catOf(id || null), total })).sort((a, b) => b.total - a.total);
-  const byPlace = {};
-  for (const e of monthExp) if (e.place) byPlace[e.place] = (byPlace[e.place] || 0) + e.amount;
-  const places = Object.entries(byPlace).sort((a, b) => b[1] - a[1]).slice(0, 5);
-  const months = [...Array(6)].map((_, i) => new Date(t.getFullYear(), t.getMonth() - 5 + i, 1));
-  const diff = pct(monthTotal, prevTotal);
-  const upcoming = active.filter((r) => !r.paidThisMonth || r.daysLeft <= 31).slice(0, 4);
+  const activity = [...exps.filter((e) => e.date <= ymd(t)).map((e) => ({ ...e, kind: 'expense' })), ...incs.map((i) => ({ ...i, kind: 'income' }))]
+    .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || '').localeCompare(a.createdAt || '')).slice(0, 8);
+  const upcoming = recs.filter((r) => r.active && r.nextDue && r.daysLeft <= 31 && !(r.state === 'paid' && r.daysLeft > 20)).slice(0, 5);
+  const eom = ov.endOfMonth;
+  const general = ov.budgets.find((b) => !b.categoryId);
 
   el.innerHTML = `
+  ${!ov.hasData && !m.hasAccounts ? `<div class="card welcome-card"><span class="ichip lg">${ic('rocket', 'lg')}</span><div><b>Empieza en 3 pasos</b><p>Añade tu cuenta con su saldo, apunta un gasto (o escanea un ticket) y registra tu nómina. También puedes probar con datos de demostración.</p></div>
+    <div class="btns"><a class="btn primary sm" href="#/cuentas">${ic('landmark', 'sm')}Añadir cuenta</a><button class="btn sm" data-act="onboarding">${ic('sparkles', 'sm')}Asistente de inicio</button></div></div>` : ''}
   <div class="grid g3">
     <div class="hero span2">
       <div>
-        <div class="label">${ic('wallet', 'sm')}Gastado en ${monthName(t, false)}</div>
-        <div class="amount">${eur(monthTotal)}</div>
-        <div class="pill">${diff === null ? `${ic('sparkles', 'xs')}Tu primer mes con datos` : `${ic(diff > 0 ? 'trending-up' : 'trending-down', 'xs')}${diff > 0 ? '+' : '−'}${Math.abs(diff).toFixed(0)}% que en ${monthName(prevD, false)}`}</div>
+        <div class="label">${ic(m.hasAccounts ? 'landmark' : 'wallet', 'sm')}${m.hasAccounts ? 'Saldo total' : `Gastado en ${monthName(t, false)}`}</div>
+        <div class="amount">${eur(m.hasAccounts ? m.balance : ov.monthExpenses)}</div>
+        ${m.hasAccounts
+          ? `<div class="pill">${ic('wallet', 'xs')}Puedes gastar ${eur(m.perDay)} al día hasta fin de mes</div>`
+          : `<div class="pill">${diff === null ? `${ic('sparkles', 'xs')}Tu primer mes con datos` : `${ic(diff > 0 ? 'trending-up' : 'trending-down', 'xs')}${diff > 0 ? '+' : '−'}${Math.abs(diff).toFixed(0)}% que en ${monthName(prevD, false)}`}</div>`}
       </div>
       <div class="foot">
-        <div><b>${monthExp.length}</b>gastos este mes</div>
-        <div><b>${eur(avg * dim)}</b>previsión a fin de mes</div>
-        <div style="min-width:180px;flex:1;max-width:260px"><b>${eur(paid)} <span style="font-weight:500;opacity:.8;font-size:13px">de ${eur(fixed)}</span></b>fijos pagados
-          <div class="progress thin" style="margin-top:7px"><div style="width:${fixed ? (paid / fixed) * 100 : 0}%"></div></div></div>
+        ${m.hasAccounts ? `<div><b>${eur(m.available)}</b>disponible</div><div><b>${eur(m.reservedBills)}</b>reservado para pagos</div>` : `<div><a href="#/cuentas" style="color:#fff;text-decoration:underline">Añade tus cuentas</a> para ver tu saldo</div>`}
+        <div><b>${m.budgetRemaining === null ? '—' : eur(m.budgetRemaining)}</b>${m.budgetRemaining === null ? '<a href="#/presupuestos" style="color:#fff;text-decoration:underline">sin presupuesto</a>' : 'presupuesto restante'}</div>
+        ${general ? `<div style="min-width:160px;flex:1;max-width:240px"><b>${general.percent}% <span style="font-weight:500;opacity:.8;font-size:13px">del presupuesto</span></b><div class="progress thin" style="margin-top:7px"><div style="width:${Math.min(100, general.percent)}%"></div></div></div>` : ''}
       </div>
     </div>
     <div class="card">
-      <div class="card-head"><h3>${ic('calendar-clock', 'sm')}Próximos cobros</h3><a class="link" href="#/mensuales">Ver todos${ic('chevron-right', 'xs')}</a></div>
+      <div class="card-head"><h3>${ic('calendar-clock', 'sm')}Próximos pagos</h3><a class="link" href="#/mensuales">Ver todos${ic('chevron-right', 'xs')}</a></div>
       <div class="list">${upcoming.map((r) => { const c = catOf(r.categoryId); return `<div class="li">
         ${catIc(c, 'sm')}<div class="main"><b>${esc(r.name)}</b><small>${fmtDate(r.nextDue, { weekday: 'short', day: 'numeric', month: 'short' })}</small></div>
-        <div style="text-align:right"><div class="amt">${eur(r.amount)}</div><span class="badge ${r.daysLeft <= r.remindDaysBefore ? 'warn' : ''}" style="margin-top:3px">${daysTxt(r.daysLeft)}</span></div></div>`; }).join('')
-        || emptyHtml('repeat', 'Sin gastos mensuales', 'Añade alquiler, luz o suscripciones y te avisaremos antes de cada cobro.', `<a class="btn sm" href="#/mensuales">${ic('plus', 'sm')}Añadir</a>`)}</div>
+        <div style="text-align:right"><div class="amt">${eur(r.amount)}</div><span class="badge ${r.state === 'overdue' ? 'danger' : r.state === 'paid' ? 'ok' : r.daysLeft <= r.remindDaysBefore ? 'warn' : ''}" style="margin-top:3px">${r.state === 'overdue' ? 'Atrasado' : r.state === 'paid' ? 'Pagado' : daysTxt(r.daysLeft)}</span></div></div>`; }).join('')
+        || emptyHtml('repeat', 'Sin pagos fijos', 'Añade alquiler, luz o suscripciones y te avisaremos antes de cada cobro.', `<a class="btn sm" href="#/mensuales">${ic('plus', 'sm')}Añadir</a>`)}</div>
     </div>
   </div>
 
   <div class="grid g4 stats">
-    <div class="card stat"><div class="top"><span class="label">Esta semana</span><span class="ichip">${ic('calendar-range')}</span></div>
-      <div><div class="value">${eur(weekTotal)}</div><div class="sub">${trendHtml(pct(weekTotal, prevWeekTotal), ' vs. semana pasada') || 'Desde el lunes'}</div></div></div>
     <a class="card stat" href="#/ingresos" style="color:inherit"><div class="top"><span class="label">Ingresos del mes</span><span class="ichip green">${ic('hand-coins')}</span></div>
-      <div><div class="value">${eur(incTotal)}</div><div class="sub">Balance: <b style="color:var(${incTotal - monthTotal >= 0 ? '--success' : '--danger'})">${incTotal - monthTotal >= 0 ? '+' : ''}${eur(incTotal - monthTotal)}</b></div></div></a>
-    <div class="card stat"><div class="top"><span class="label">Gastos fijos</span><span class="ichip amber">${ic('repeat')}</span></div>
-      <div><div class="value">${eur(fixed)}</div><div class="sub">${active.length} al mes</div></div></div>
-    <a class="card stat" href="#/ahorros" style="color:inherit"><div class="top"><span class="label">Ahorrado</span><span class="ichip">${ic('piggy-bank')}</span></div>
-      <div><div class="value">${eur(savTotal)}</div><div class="sub">${savs.length ? `${savMonth >= 0 ? '+' : '−'}${eur(Math.abs(savMonth))} este mes` : 'Crea tu primera hucha'}</div></div></a>
+      <div><div class="value">${eur(ov.monthIncomes)}</div><div class="sub">${cap(monthName(t, false))}</div></div></a>
+    <a class="card stat" href="#/gastos" style="color:inherit"><div class="top"><span class="label">Gastos del mes</span><span class="ichip red">${ic('receipt-text')}</span></div>
+      <div><div class="value">${eur(ov.monthExpenses)}</div><div class="sub">${trendHtml(diff, ` vs. ${monthName(prevD, false)}`) || `${monthExp.length} gastos`}</div></div></a>
+    <div class="card stat"><div class="top"><span class="label">Ahorro mensual</span><span class="ichip">${ic('piggy-bank')}</span></div>
+      <div><div class="value ${ov.monthSaving < 0 ? 'neg' : ''}">${eur(ov.monthSaving)}</div><div class="sub">${ov.savingsRate === null ? 'Ingresos − gastos' : `${ov.savingsRate} % de tus ingresos`}</div></div></div>
+    <a class="card stat" href="#/previsiones" style="color:inherit"><div class="top"><span class="label">Previsión fin de mes</span><span class="ichip amber">${ic('chart-line')}</span></div>
+      <div><div class="value ${eom && eom.realistic < 0 ? 'neg' : ''}">${eom ? eur(eom.realistic) : '—'}</div><div class="sub">Fiabilidad ${ov.confidence.label.toLowerCase()}</div></div></a>
   </div>
 
+  ${ov.alerts.length || ov.tips.length ? `<div class="grid g3">
+    <div class="card span2"><div class="card-head"><h3>${ic('lightbulb', 'sm')}Consejos para mejorar tus finanzas</h3><a class="link" href="#/asistente?tab=consejos">Ver todos${ic('chevron-right', 'xs')}</a></div>
+      <div class="tips-mini">${ov.tips.map((r) => `<a href="${esc(r.action.href)}" class="tip-mini"><span class="ichip sm ${r.priority === 'alta' ? 'red' : r.priority === 'media' ? 'amber' : ''}">${ic('lightbulb', 'sm')}</span><span><b>${esc(r.title)}</b><small>${esc(r.evidence[0] || r.text)}</small></span>${r.potential ? `<em>≈ ${eurShort(r.potential)}/mes</em>` : ''}</a>`).join('') || emptyHtml('party-popper', 'Todo en orden', 'Cuando tengamos más datos te daremos consejos personalizados.')}</div></div>
+    <div class="card"><div class="card-head"><h3>${ic('bell-ring', 'sm')}Previsiones</h3></div>
+      <div class="alert-list">${ov.alerts.map((a) => `<div class="notice ${a.level === 'danger' ? 'danger' : a.level === 'warn' ? 'warn' : a.level === 'ok' ? 'ok' : ''}">${ic(a.level === 'danger' || a.level === 'warn' ? 'triangle-alert' : 'info', 'sm')}<span>${esc(a.text)}</span></div>`).join('') || emptyHtml('circle-check', 'Sin alertas', '')}</div></div>
+  </div>` : ''}
+
   <div class="grid g3">
+    <div class="card span2">
+      <div class="card-head"><h3>${ic('chart-column', 'sm')}Ingresos y gastos</h3><span class="badge">Últimos 6 meses</span></div>
+      <div class="chart-box"><canvas id="cMonths"></canvas></div>
+    </div>
     <div class="card">
       <div class="card-head"><h3>${ic('chart-pie', 'sm')}Por categoría</h3><span class="badge">${cap(monthName(t, false))}</span></div>
-      ${catItems.length ? `<div class="donut-wrap"><canvas id="cCat"></canvas><div class="donut-center"><div><b>${eurShort(monthTotal)}</b><small>total</small></div></div></div>${legendHtml(catItems, monthTotal)}`
+      ${catItems.length ? `<div class="donut-wrap"><canvas id="cCat"></canvas><div class="donut-center"><div><b>${eurShort(ov.monthExpenses)}</b><small>total</small></div></div></div>${legendHtml(catItems, ov.monthExpenses)}`
         : emptyHtml('chart-pie', 'Sin datos este mes', 'Cuando añadas gastos verás aquí el reparto.')}
-    </div>
-    <div class="card span2">
-      <div class="card-head"><h3>${ic('receipt-text', 'sm')}Gasto diario</h3><span class="badge">${cap(monthName(t))}</span></div>
-      <div class="chart-box"><canvas id="cDays"></canvas></div>
     </div>
   </div>
 
   <div class="grid g3">
     <div class="card span2">
-      <div class="card-head"><h3>${ic('trending-up', 'sm')}Últimos 6 meses</h3></div>
-      <div class="chart-box sm"><canvas id="cMonths"></canvas></div>
+      <div class="card-head"><h3>${ic('chart-line', 'sm')}Saldo: evolución y previsión</h3><a class="link" href="#/previsiones">Detalle${ic('chevron-right', 'xs')}</a></div>
+      ${m.hasAccounts ? '<div class="chart-box sm"><canvas id="cBal"></canvas></div>' : emptyHtml('chart-line', 'Añade tus cuentas', 'Con el saldo de tus cuentas te mostramos cómo evolucionará.', `<a class="btn sm" href="#/cuentas">${ic('plus', 'sm')}Añadir cuenta</a>`)}
     </div>
     <div class="card">
-      <div class="card-head"><h3>${ic('map-pin', 'sm')}Dónde más gastas</h3></div>
-      <div class="list">${places.map(([p, v], i) => `<div class="li"><span class="ichip sm ${['', 'green', 'amber', 'red', ''][i]}">${ic('store', 'sm')}</span>
-        <div class="main"><b>${esc(p)}</b><div class="progress thin" style="margin-top:6px"><div style="width:${(v / places[0][1]) * 100}%"></div></div></div><div class="amt">${eur(v)}</div></div>`).join('')
-        || emptyHtml('map-pin', 'Aún no hay lugares', 'Indica «dónde» al apuntar un gasto para verlo aquí.')}</div>
+      <div class="card-head"><h3>${ic('target', 'sm')}Presupuestos</h3><a class="link" href="#/presupuestos">Ver${ic('chevron-right', 'xs')}</a></div>
+      <div class="list">${ov.budgets.map((b) => `<div class="li"><div class="main"><div class="bl-top"><b>${esc(b.category?.name || 'General')}</b><small>${eur(b.spent)} / ${eur(b.amount)}</small></div>${bar(b.percent, b.level.key)}</div></div>`).join('')
+        || emptyHtml('target', 'Sin presupuestos', 'Pon límites a tus categorías.', `<a class="btn sm" href="#/presupuestos">${ic('plus', 'sm')}Crear</a>`)}</div>
     </div>
   </div>
 
   <div class="card">
-    <div class="card-head"><h3>${ic('clock', 'sm')}Últimos gastos</h3><a class="link" href="#/gastos">Ver todos${ic('chevron-right', 'xs')}</a></div>
-    <div class="list" id="recent">${exps.slice(0, 6).map((e) => expenseRow(e)).join('')
-      || emptyHtml('receipt-text', 'Todavía no hay gastos', 'Pulsa «Nuevo gasto» para apuntar el primero.', `<button class="btn primary sm" data-act="new-expense">${ic('plus', 'sm')}Nuevo gasto</button>`)}</div>
+    <div class="card-head"><h3>${ic('clock', 'sm')}Actividad reciente</h3><a class="link" href="#/gastos">Ver todo${ic('chevron-right', 'xs')}</a></div>
+    <div class="list" id="recent">${activity.map((x) => x.kind === 'income'
+      ? `<div class="li click" data-inc="${x.id}"><span class="cat-ic sm" style="--c:#16a34a">${ic('hand-coins')}</span><div class="main"><b>${esc(x.name)}</b><small>${fmtDate(x.date)}<span class="dot-sep"></span>Ingreso</small></div><div class="amt pos">+${eur(x.amount)}</div></div>`
+      : expenseRow(x)).join('')
+      || emptyHtml('receipt-text', 'Todavía no hay movimientos', 'Pulsa «Nuevo gasto» o escanea un ticket.', `<button class="btn primary sm" data-act="new-expense">${ic('plus', 'sm')}Nuevo gasto</button>`)}</div>
   </div>`;
 
-  bindExpenseClicks($('#recent'), exps);
+  $('#recent').addEventListener('click', (ev) => {
+    const i = ev.target.closest('[data-inc]');
+    if (i) return incomeForm(incs.find((x) => x.id === i.dataset.inc));
+    const el2 = ev.target.closest('[data-id]');
+    const e = el2 && exps.find((x) => x.id === el2.dataset.id);
+    if (e) expenseForm(e);
+  });
   if (catItems.length) donut($('#cCat'), catItems);
-  chart($('#cDays'), {
+  chart($('#cMonths'), {
     type: 'bar',
     data: {
-      labels: [...Array(dim)].map((_, i) => i + 1),
-      datasets: [{
-        data: [...Array(dim)].map((_, i) => sum(monthExp.filter((e) => e.date === `${mk}-${pad(i + 1)}`))),
-        backgroundColor: [...Array(dim)].map((_, i) => (i + 1 === t.getDate() ? cssVar('--primary-2') : cssVar('--primary'))),
-        borderRadius: 6, maxBarThickness: 22,
-      }],
+      labels: ov.months.map((x) => cap(parse(x.month + '-01').toLocaleDateString('es-ES', { month: 'short' }).replace('.', ''))),
+      datasets: [
+        { label: 'Ingresos', data: ov.months.map((x) => x.incomes), backgroundColor: cssVar('--success'), borderRadius: 6, maxBarThickness: 22 },
+        { label: 'Gastos', data: ov.months.map((x) => x.expenses), backgroundColor: cssVar('--danger'), borderRadius: 6, maxBarThickness: 22 },
+      ],
     },
-    options: { ...barOpts, plugins: { ...barOpts.plugins, tooltip: { callbacks: { title: (c) => `${c[0].label} de ${monthName(t, false)}`, label: (c) => ` ${eur(c.parsed.y)}` } } } },
+    options: { ...barOpts, plugins: { ...barOpts.plugins, legend: { display: true, position: 'bottom', labels: { boxWidth: 12 } }, tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${eur(c.parsed.y)}` } } } },
   });
-  const ctx = $('#cMonths')?.getContext('2d');
-  let grad = cssVar('--primary');
-  if (ctx) { grad = ctx.createLinearGradient(0, 0, 0, 210); grad.addColorStop(0, cssVar('--primary') + '55'); grad.addColorStop(1, cssVar('--primary') + '00'); }
-  chart($('#cMonths'), {
-    type: 'line',
-    data: {
-      labels: months.map((d) => cap(d.toLocaleDateString('es-ES', { month: 'short' }).replace('.', ''))),
-      datasets: [{ data: months.map((d) => sum(exps.filter((e) => e.date.startsWith(monthKey(d))))), borderColor: cssVar('--primary'), backgroundColor: grad, fill: true, tension: 0.4, pointRadius: 4, pointBackgroundColor: cssVar('--surface'), pointBorderWidth: 2, borderWidth: 2.5 }],
-    },
-    options: barOpts,
-  });
+  if (m.hasAccounts) {
+    const hist = ov.history;
+    const fut = ov.forecastSeries;
+    const labels = [...hist.map((x) => x.date), ...fut.slice(1).map((x) => x.date)];
+    chart($('#cBal'), {
+      type: 'line',
+      data: {
+        labels: labels.map((d) => fmtDate(d)),
+        datasets: [
+          { label: 'Saldo', data: [...hist.map((x) => x.balance), ...fut.slice(1).map(() => null)], borderColor: cssVar('--text-2'), borderWidth: 2, pointRadius: 0, tension: 0.3 },
+          { label: 'Previsto', data: [...hist.slice(0, -1).map(() => null), fut[0]?.realistic ?? null, ...fut.slice(1).map((x) => x.realistic)], borderColor: cssVar('--primary'), borderDash: [6, 4], borderWidth: 2.5, pointRadius: 0, tension: 0.3 },
+        ],
+      },
+      options: { ...barOpts, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => (c.parsed.y == null ? null : ` ${c.dataset.label}: ${eur(c.parsed.y)}`) } } }, scales: { y: { ...moneyAxis, beginAtZero: false }, x: { grid: { display: false }, border: { display: false }, ticks: { maxTicksLimit: 7 } } } },
+    });
+  }
 }
 
 // ---------- Gastos ----------
@@ -538,7 +564,8 @@ async function renderExpenses(el) {
     <div class="month-nav"><button class="icon-btn" id="mPrev" title="Mes anterior">${ic('chevron-left')}</button><span class="lbl">${cap(monthName(mDate))}</span><button class="icon-btn" id="mNext" title="Mes siguiente">${ic('chevron-right')}</button></div>
     <select id="fCat"><option value="">Todas las categorías</option><option value="none">Sin categoría</option>${cats.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
     <div class="input-icon grow">${ic('search')}<input type="search" id="fQ" placeholder="Buscar concepto, lugar o nota…" value="${esc(state.q)}"></div>
-    <button class="btn" id="btnCsv">${ic('file-spreadsheet', 'sm')}Excel</button>
+    ${accs.length ? `<select id="fAcc"><option value="">Todas las cuentas</option>${accs.map((a) => `<option value="${a.id}" ${state.acc === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>` : ''}
+    <button class="btn" id="btnCsv">${ic('file-spreadsheet', 'sm')}Exportar</button>
   </div>
   <div class="card"><div id="tbl"><div class="skeleton" style="height:240px"></div></div></div>`;
   $('#fCat').value = state.cat;
@@ -547,6 +574,7 @@ async function renderExpenses(el) {
     const [y, m] = state.month.split('-').map(Number);
     const qs = new URLSearchParams({ from: `${y}-${pad(m)}-01`, to: ymd(new Date(y, m, 0)) });
     if (state.cat) qs.set('category', state.cat);
+    if (state.acc) qs.set('account', state.acc);
     if (state.q) qs.set('q', state.q);
     list = await api('/expenses?' + qs);
     if (!list.length) {
@@ -578,51 +606,79 @@ async function renderExpenses(el) {
   let qt;
   $('#fQ').oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => { state.q = e.target.value; load(); }, 250); };
   $('#btnCsv').onclick = exportModal;
+  $('#fAcc')?.addEventListener('change', (e) => { state.acc = e.target.value; load(); });
   await load();
 }
 
 // ---------- Calendario ----------
+const calF = { exp: true, inc: true, bills: true, rec: true, cat: '', acc: '', view: 'mes' };
 async function renderCalendar(el) {
   const base = parse(state.calMonth + '-01');
   const y = base.getFullYear(), m = base.getMonth();
   const first = new Date(y, m, 1), last = new Date(y, m + 1, 0);
-  const [exps, recs] = await Promise.all([api(`/expenses?from=${ymd(first)}&to=${ymd(last)}`), api('/recurring')]);
-  const byDay = {};
-  for (const e of exps) (byDay[e.date] ||= []).push(e);
-  const dues = {};
-  for (const r of recs.filter((r) => r.active)) (dues[ymd(dueInMonth(r.dayOfMonth, y, m))] ||= []).push(r);
-  const max = Math.max(1, ...Object.values(byDay).map(sum));
-  const lead = (first.getDay() + 6) % 7;
   const tStr = ymd(todayD());
-
-  let cells = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map((d) => `<div class="dow">${d}</div>`).join('');
-  cells += '<div class="day out"></div>'.repeat(lead);
-  for (let d = 1; d <= last.getDate(); d++) {
-    const ds = `${y}-${pad(m + 1)}-${pad(d)}`;
-    const list = byDay[ds] || [];
+  // En la vista semanal puede que la semana cruce de mes: se cargan los dos
+  const weekFrom = weekStart(parse(state.calSel));
+  const months = [...new Set([state.calMonth, monthKey(weekFrom), monthKey(addDays(weekFrom, 6))])];
+  const parts = await Promise.all(months.map((mk) => api('/calendar?month=' + mk)));
+  const data = { expenses: parts.flatMap((p) => p.expenses), incomes: parts.flatMap((p) => p.incomes), bills: parts.flatMap((p) => p.bills) };
+  const exps = data.expenses.filter((e) => (!calF.cat || e.categoryId === calF.cat) && (!calF.acc || e.accountId === calF.acc));
+  const by = (list) => { const o = {}; for (const x of list) (o[x.date] ||= []).push(x); return o; };
+  const E = by(calF.exp ? exps : []);
+  const I = by(calF.inc && !calF.cat ? data.incomes.filter((i) => !calF.acc || i.accountId === calF.acc) : []);
+  const B = by(data.bills.filter((b) => (b.paid || b.auto ? calF.rec : calF.bills) && (!calF.cat || b.categoryId === calF.cat)));
+  const max = Math.max(1, ...Object.values(E).map(sum));
+  const lead = (first.getDay() + 6) % 7;
+  const dayCell = (ds, d, extraCls = '') => {
+    const list = E[ds] || [];
     const tot = sum(list);
-    cells += `<div class="day ${ds === tStr ? 'today' : ''} ${ds === state.calSel ? 'sel' : ''}" data-date="${ds}">
+    const inc = sum(I[ds] || []);
+    const bills = B[ds] || [];
+    return `<div class="day ${extraCls} ${ds === tStr ? 'today' : ''} ${ds === state.calSel ? 'sel' : ''}" data-date="${ds}">
       ${tot ? `<div class="heat" style="opacity:${0.04 + (tot / max) * 0.2}"></div>` : ''}
       <span class="n">${d}</span>
-      ${tot ? `<span class="t">${eurShort(tot)}</span>` : ''}
-      ${(dues[ds] || []).map((r) => `<span class="due" title="${esc(r.name)} · ${eur(r.amount)}">${ic('bell')}<span>${esc(r.name)}</span></span>`).join('')}
+      ${tot ? `<span class="t">−${eurShort(tot)}</span>` : ''}
+      ${inc ? `<span class="t inc">+${eurShort(inc)}</span>` : ''}
+      ${bills.slice(0, 2).map((b) => `<span class="due ${b.paid || b.auto ? 'rec' : 'pend'} ${b.overdue ? 'late' : ''}" title="${esc(b.name)} · ${eur(b.amount)}">${ic(b.paid ? 'check' : b.auto ? 'repeat' : 'bell')}<span>${esc(b.name)}</span></span>`).join('')}
       <div class="dots">${list.slice(0, 6).map((e) => `<i style="background:${safeColor(catOf(e.categoryId).color)}"></i>`).join('')}</div>
     </div>`;
+  };
+  let cells = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map((d) => `<div class="dow">${d}</div>`).join('');
+  if (calF.view === 'mes') {
+    cells += '<div class="day out"></div>'.repeat(lead);
+    for (let d = 1; d <= last.getDate(); d++) cells += dayCell(`${y}-${pad(m + 1)}-${pad(d)}`, d);
+  } else {
+    for (let i = 0; i < 7; i++) { const dd = addDays(weekFrom, i); cells += dayCell(ymd(dd), dd.getDate(), 'tall'); }
   }
+  const monthExp = sum(exps.filter((e) => e.date.startsWith(state.calMonth)));
+  const monthInc = sum(data.incomes.filter((i) => i.date.startsWith(state.calMonth)));
+  const pendingBills = data.bills.filter((b) => b.date.startsWith(state.calMonth) && !b.paid && !b.auto);
+  const weekDays = [...Array(7)].map((_, i) => ymd(addDays(weekFrom, i)));
+  const chip = (k, label, cls) => `<button class="fchip ${cls} ${calF[k] ? 'on' : ''}" data-f="${k}"><i></i>${label}</button>`;
 
   el.innerHTML = `
+  <div class="toolbar cal-filters">
+    <div class="seg sm" id="calView"><button data-v="mes" class="${calF.view === 'mes' ? 'on' : ''}">Mes</button><button data-v="semana" class="${calF.view === 'semana' ? 'on' : ''}">Semana</button></div>
+    ${chip('exp', 'Gastos', 'red')}${chip('inc', 'Ingresos', 'green')}${chip('bills', 'Facturas pendientes', 'blue')}${chip('rec', 'Pagos recurrentes', 'orange')}
+    <select id="calCat"><option value="">Todas las categorías</option>${cats.map((c) => `<option value="${c.id}" ${calF.cat === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
+    ${accs.length ? `<select id="calAcc"><option value="">Todas las cuentas</option>${accs.map((a) => `<option value="${a.id}" ${calF.acc === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>` : ''}
+  </div>
   <div class="grid g3">
     <div class="card span2">
       <div class="cal-head">
-        <h2>${monthName(base)}</h2>
+        <h2>${calF.view === 'mes' ? monthName(base) : `${fmtDate(weekDays[0], { day: 'numeric', month: 'short' })} – ${fmtDate(weekDays[6], { day: 'numeric', month: 'short', year: 'numeric' })}`}</h2>
         <button class="btn sm" id="todayM">Hoy</button>
         <div class="month-nav"><button class="icon-btn" id="prevM">${ic('chevron-left')}</button><button class="icon-btn" id="nextM">${ic('chevron-right')}</button></div>
       </div>
-      <div class="cal" id="cal">${cells}</div>
-      <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:16px;font-size:13px;color:var(--muted)">
-        <span>Total del mes: <b style="color:var(--text)">${eur(sum(exps))}</b></span>
-        <span style="display:inline-flex;gap:6px;align-items:center"><span class="badge warn">${ic('bell')}</span>Gasto mensual que se cobra ese día</span>
-      </div>
+      <div class="cal ${calF.view === 'semana' ? 'week' : ''}" id="cal">${cells}</div>
+      ${calF.view === 'semana' ? `<div class="week-table"><div class="xl-wrap"><table class="xl"><thead><tr><th>Día</th><th class="num">Ingresos</th><th class="num">Gastos</th><th class="num">Balance</th></tr></thead><tbody>
+        ${weekDays.map((ds) => { const g = sum(E[ds] || []); const i = sum(I[ds] || []); return `<tr><td>${cap(fmtDate(ds, { weekday: 'short', day: 'numeric' }))}</td><td class="num pos">${i ? '+' + eur(i) : '—'}</td><td class="num">${g ? eur(g) : '—'}</td><td class="num">${signed(i - g)}</td></tr>`; }).join('')}
+        <tr class="tot"><td>Semana</td><td class="num">${eur(sum(weekDays.flatMap((d) => I[d] || [])))}</td><td class="num">${eur(sum(weekDays.flatMap((d) => E[d] || [])))}</td><td class="num">${signed(sum(weekDays.flatMap((d) => I[d] || [])) - sum(weekDays.flatMap((d) => E[d] || [])))}</td></tr>
+      </tbody></table></div></div>` : `
+      <div class="cal-sum">
+        <span>Gastos: <b>${eur(monthExp)}</b></span><span>Ingresos: <b class="pos">${eur(monthInc)}</b></span><span>Balance: <b>${signed(monthInc - monthExp)}</b></span>
+        ${pendingBills.length ? `<span>Pendiente de pagar: <b>${eur(sum(pendingBills))}</b></span>` : ''}
+      </div>`}
     </div>
     <div class="card" id="dayPanel"></div>
   </div>`;
@@ -630,17 +686,35 @@ async function renderCalendar(el) {
   const showDay = (ds) => {
     state.calSel = ds;
     $$('.cal .day').forEach((c) => c.classList.toggle('sel', c.dataset.date === ds));
-    const list = byDay[ds] || [];
-    const due = dues[ds] || [];
+    const list = E[ds] || [];
+    const incs = I[ds] || [];
+    const bills = B[ds] || [];
+    const g = sum(list), i = sum(incs);
     $('#dayPanel').innerHTML = `
       <div class="card-head" style="margin-bottom:6px"><h3>${ic('calendar-days', 'sm')}${cap(fmtDate(ds, { weekday: 'long', day: 'numeric', month: 'long' }))}</h3></div>
-      <div class="day-panel-total">${eur(sum(list))}</div>
-      <div class="muted" style="font-size:13px;margin-bottom:14px">${list.length} gasto${list.length === 1 ? '' : 's'}</div>
-      ${due.length ? `<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">${due.map((r) => `<div class="notice warn" style="padding:10px 12px">${ic('bell', 'sm')}<span><b>${esc(r.name)}</b> se cobra este día · ${eur(r.amount)}</span></div>`).join('')}</div>` : ''}
-      <div class="list" id="dayList">${list.map((e) => expenseRow(e, { date: false })).join('') || emptyHtml('calendar-check', 'Día sin gastos', '')}</div>
-      <button class="btn primary full" id="addDay" style="margin-top:16px">${ic('plus', 'sm')}Añadir gasto este día</button>`;
-    bindExpenseClicks($('#dayList'), list);
+      <div class="day-sum"><div><small>Ingresos</small><b class="pos">${eur(i)}</b></div><div><small>Gastos</small><b>${eur(g)}</b></div><div><small>Balance</small><b>${signed(i - g)}</b></div></div>
+      <div class="muted" style="font-size:13px;margin:10px 0 12px">${list.length + incs.length} movimiento${list.length + incs.length === 1 ? '' : 's'}${bills.length ? ` · ${bills.length} pago${bills.length === 1 ? '' : 's'} programado${bills.length === 1 ? '' : 's'}` : ''}</div>
+      ${bills.length ? `<div class="bill-list">${bills.map((b) => `<div class="notice ${b.paid ? 'ok' : b.overdue ? 'danger' : b.auto ? 'orange' : 'blue'}">${ic(b.paid ? 'circle-check' : b.auto ? 'repeat' : 'bell', 'sm')}<span><b>${esc(b.name)}</b> · ${eur(b.amount)}<small>${b.paid ? 'Pagado' : b.overdue ? 'Atrasado' : b.auto ? 'Se registra solo' : 'Pendiente de pagar'} · ${esc(b.frequency)}</small></span>
+        ${!b.paid && !b.auto && b.date <= ymd(addDays(todayD(), 45)) ? `<button class="btn sm" data-pay="${b.recurringId}" data-date="${b.date}">Pagar</button>` : ''}</div>`).join('')}</div>` : ''}
+      <div class="list" id="dayList">
+        ${incs.map((x) => `<div class="li click" data-inc="${x.id}"><span class="cat-ic sm" style="--c:#16a34a">${ic('hand-coins')}</span><div class="main"><b>${esc(x.name)}</b><small>Ingreso</small></div><div class="amt pos">+${eur(x.amount)}</div></div>`).join('')}
+        ${list.map((e) => expenseRow(e, { date: false })).join('')}
+        ${!list.length && !incs.length ? emptyHtml('calendar-check', 'Día sin movimientos', '') : ''}
+      </div>
+      <div class="day-btns"><button class="btn primary" id="addDay">${ic('plus', 'sm')}Gasto</button><button class="btn" id="addIncDay">${ic('hand-coins', 'sm')}Ingreso</button></div>`;
+    hydrate($('#dayPanel'));
+    $('#dayList').onclick = (ev) => {
+      const ii = ev.target.closest('[data-inc]');
+      if (ii) return incomeForm(incs.find((x) => x.id === ii.dataset.inc));
+      const r = ev.target.closest('[data-id]');
+      const e = r && list.find((x) => x.id === r.dataset.id);
+      if (e) expenseForm(e);
+    };
+    $$('#dayPanel [data-pay]').forEach((b) => b.addEventListener('click', async () => {
+      try { await api(`/recurring/${b.dataset.pay}/pay`, { method: 'POST' }); toast('Pago registrado'); route(); } catch (e) { toast(e.message, true); }
+    }));
     $('#addDay').onclick = () => expenseForm({}, { date: ds });
+    $('#addIncDay').onclick = () => incomeForm({ date: ds });
   };
   $('#cal').onclick = (ev) => {
     const c = ev.target.closest('.day[data-date]');
@@ -648,56 +722,75 @@ async function renderCalendar(el) {
     showDay(c.dataset.date);
     if (matchMedia('(max-width: 900px)').matches) $('#dayPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
-  const go = (n) => { state.calMonth = monthKey(new Date(y, m + n, 1)); route(); };
+  const go = (n) => {
+    if (calF.view === 'mes') { state.calMonth = monthKey(new Date(y, m + n, 1)); state.calSel = ymd(new Date(y, m + n, 1)); }
+    else { state.calSel = ymd(addDays(weekFrom, 7 * n)); state.calMonth = monthKey(parse(state.calSel)); }
+    route();
+  };
   $('#prevM').onclick = () => go(-1);
   $('#nextM').onclick = () => go(1);
   $('#todayM').onclick = () => { state.calMonth = monthKey(todayD()); state.calSel = ymd(todayD()); route(); };
-  showDay(state.calSel.startsWith(state.calMonth) ? state.calSel : ymd(first));
+  $('#calView').onclick = (e) => { const b = e.target.closest('button'); if (b) { calF.view = b.dataset.v; route(); } };
+  $$('.fchip').forEach((b) => b.addEventListener('click', () => { calF[b.dataset.f] = !calF[b.dataset.f]; route(); }));
+  $('#calCat').onchange = (e) => { calF.cat = e.target.value; route(); };
+  $('#calAcc')?.addEventListener('change', (e) => { calF.acc = e.target.value; route(); });
+  showDay(calF.view === 'semana' || state.calSel.startsWith(state.calMonth) ? state.calSel : ymd(first));
 }
 
 // ---------- Gastos mensuales ----------
+const FREQ_OPTS = [['weekly', 'Semanal'], ['biweekly', 'Quincenal (cada 14 días)'], ['monthly', 'Mensual'], ['quarterly', 'Trimestral'], ['semiannual', 'Semestral'], ['yearly', 'Anual'], ['daily', 'Diario'], ['custom', 'Personalizado']];
+const STATE_BADGE = { overdue: ['danger', 'triangle-alert', 'Atrasado'], paid: ['ok', 'circle-check', 'Pagado'], pending: ['', 'clock', 'Pendiente'], paused: ['', 'pause', 'En pausa'] };
 async function renderRecurring(el) {
   const recs = await api('/recurring');
   updateDueBadge(recs);
   const active = recs.filter((r) => r.active);
-  const fixed = active.reduce((a, r) => a + r.amount, 0);
-  const paid = active.filter((r) => r.paidThisMonth).reduce((a, r) => a + r.amount, 0);
+  const fixed = active.reduce((a, r) => a + r.monthly, 0);
+  const t = todayD();
+  const mk = monthKey(t);
+  const cal = await api('/calendar?month=' + mk);
+  const monthBills = cal.bills.filter((b) => active.some((r) => r.id === b.recurringId));
+  const paid = sum(monthBills.filter((b) => b.paid));
+  const pending = sum(monthBills.filter((b) => !b.paid));
+  const overdue = recs.filter((r) => r.state === 'overdue');
   el.innerHTML = `
   <div class="grid g3">
-    <div class="card stat"><div class="top"><span class="label">Total fijo al mes</span><span class="ichip">${ic('repeat')}</span></div>
-      <div><div class="value">${eur(fixed)}</div><div class="sub">${active.length} gasto${active.length === 1 ? '' : 's'} activo${active.length === 1 ? '' : 's'}</div></div></div>
+    <div class="card stat"><div class="top"><span class="label">Gasto fijo al mes</span><span class="ichip">${ic('repeat')}</span></div>
+      <div><div class="value">${eur(fixed)}</div><div class="sub">${active.length} pago${active.length === 1 ? '' : 's'} activo${active.length === 1 ? '' : 's'} (equivalente mensual)</div></div></div>
     <div class="card stat"><div class="top"><span class="label">Pagado este mes</span><span class="ichip green">${ic('circle-check')}</span></div>
-      <div><div class="value">${eur(paid)}</div><div class="progress" style="margin-top:10px"><div style="width:${fixed ? (paid / fixed) * 100 : 0}%"></div></div></div></div>
-    <div class="card stat"><div class="top"><span class="label">Pendiente</span><span class="ichip amber">${ic('hourglass')}</span></div>
-      <div><div class="value">${eur(fixed - paid)}</div><div class="sub">${ic('mail', 'xs')}Avisos a ${esc(me.email)}</div></div></div>
+      <div><div class="value">${eur(paid)}</div><div class="progress" style="margin-top:10px"><div style="width:${paid + pending ? (paid / (paid + pending)) * 100 : 0}%"></div></div></div></div>
+    <div class="card stat"><div class="top"><span class="label">Pendiente este mes</span><span class="ichip ${overdue.length ? 'red' : 'amber'}">${ic('hourglass')}</span></div>
+      <div><div class="value">${eur(pending)}</div><div class="sub">${overdue.length ? `<span class="neg">${overdue.length} atrasado${overdue.length === 1 ? '' : 's'}</span>` : `${ic('mail', 'xs')}Avisos a ${esc(me.email)}`}</div></div></div>
   </div>
   <div class="toolbar" style="justify-content:space-between">
-    <div class="muted" style="font-size:14px">Te enviamos un correo antes de cada cobro.</div>
-    <button class="btn primary" id="addRec">${ic('plus', 'sm')}Nuevo gasto mensual</button>
+    <div class="muted" style="font-size:14px">Alquiler, recibos, seguros, suscripciones… con cualquier frecuencia. Te avisamos antes de cada cobro.</div>
+    <button class="btn primary" id="addRec">${ic('plus', 'sm')}Nuevo pago fijo</button>
   </div>
   <div class="grid g3" id="recs">
     ${recs.map((r) => {
       const c = catOf(r.categoryId);
-      const progress = Math.max(4, Math.min(100, 100 - (r.daysLeft / 30) * 100));
-      return `<div class="card rec-card ${r.active ? '' : 'inactive'}">
-        <div class="top">${catIc(c)}<div class="main"><b>${esc(r.name)}</b><small>${esc(c.name)} · día ${r.dayOfMonth}</small></div><div class="amount">${eur(r.amount)}</div></div>
+      const [bc, bi, bl] = STATE_BADGE[r.state] || STATE_BADGE.pending;
+      const progress = r.daysLeft == null ? 0 : Math.max(4, Math.min(100, 100 - (r.daysLeft / 30) * 100));
+      return `<div class="card rec-card ${r.active ? '' : 'inactive'} ${r.state === 'overdue' ? 'late' : ''}">
+        <div class="top">${catIc(c)}<div class="main"><b>${esc(r.name)}</b><small>${esc(c.name)} · ${esc(r.frequencyLabel)}</small></div><div class="amount">${eur(r.amount)}</div></div>
         ${r.active ? `<div class="due-box">
-          <div class="line"><span class="muted">Próximo cobro</span><b>${cap(fmtDate(r.nextDue, { weekday: 'short', day: 'numeric', month: 'short' }))}</b></div>
+          <div class="line"><span class="muted">${r.state === 'overdue' ? 'Vencía el' : 'Próximo cobro'}</span><b>${r.nextDue ? cap(fmtDate(r.nextDue, { weekday: 'short', day: 'numeric', month: 'short' })) : '—'}</b></div>
           <div class="progress thin"><div style="width:${progress}%"></div></div>
-          <div class="line"><span class="badge ${r.daysLeft <= r.remindDaysBefore ? 'warn' : ''}">${ic('clock')}${daysTxt(r.daysLeft)}</span>
-            ${r.paidThisMonth ? `<span class="badge ok">${ic('circle-check')}Pagado este mes</span>` : ''}</div>
-        </div>` : `<div class="due-box"><div class="line"><span class="badge">${ic('pause')}En pausa</span></div></div>`}
+          <div class="line"><span class="badge ${r.state === 'overdue' ? 'danger' : r.daysLeft <= r.remindDaysBefore ? 'warn' : ''}">${ic('clock')}${r.state === 'overdue' ? 'Atrasado' : daysTxt(r.daysLeft)}</span>
+            <span class="badge ${bc}">${ic(bi)}${bl}</span></div>
+        </div>` : `<div class="due-box"><div class="line"><span class="badge">${ic('pause')}En pausa / cancelado</span></div></div>`}
         <div class="meta">
           <span class="badge">${ic('bell')}Aviso ${r.remindDaysBefore === 0 ? 'el mismo día' : `${r.remindDaysBefore} día${r.remindDaysBefore === 1 ? '' : 's'} antes`}</span>
           ${r.autoAdd ? `<span class="badge primary">${ic('zap')}Automático</span>` : ''}
-          ${r.place ? `<span class="badge">${ic('store')}${esc(r.place)}</span>` : ''}
+          ${r.frequency !== 'monthly' ? `<span class="badge">≈ ${eur(r.monthly)}/mes</span>` : ''}
+          ${r.accountId && accOf(r.accountId) ? `<span class="badge">${ic('landmark')}${esc(accOf(r.accountId).name)}</span>` : ''}
+          ${r.demo ? '<span class="badge warn">Demo</span>' : ''}
         </div>
         <div class="btns">
-          ${r.paidThisMonth || !r.active ? `<button class="btn sm" data-edit="${r.id}">${ic('pencil', 'sm')}Editar</button>` : `<button class="btn sm primary" data-pay="${r.id}">${ic('check', 'sm')}Marcar pagado</button><button class="icon-btn sm" data-edit="${r.id}" title="Editar">${ic('pencil', 'sm')}</button>`}
+          ${!r.active || (r.state === 'paid' && r.daysLeft > 7) || r.autoAdd ? `<button class="btn sm" data-edit="${r.id}">${ic('pencil', 'sm')}Editar</button>` : `<button class="btn sm primary" data-pay="${r.id}">${ic('check', 'sm')}Marcar pagado</button><button class="icon-btn sm" data-edit="${r.id}" title="Editar">${ic('pencil', 'sm')}</button>`}
           <button class="icon-btn sm danger" data-del="${r.id}" title="Eliminar">${ic('trash-2', 'sm')}</button>
         </div>
       </div>`;
-    }).join('') || `<div class="card span2">${emptyHtml('repeat', 'Aún no tienes gastos mensuales', 'Añade tu alquiler, la luz, internet o tus suscripciones y recibirás un correo antes de cada cobro.', `<button class="btn primary sm" id="emptyRec">${ic('plus', 'sm')}Añadir el primero</button>`)}</div>`}
+    }).join('') || `<div class="card span2">${emptyHtml('repeat', 'Aún no tienes pagos fijos', 'Añade tu alquiler, la luz, internet, seguros o suscripciones y recibirás un aviso antes de cada cobro.', `<button class="btn primary sm" id="emptyRec">${ic('plus', 'sm')}Añadir el primero</button>`)}</div>`}
   </div>`;
   $('#addRec').onclick = () => recurringForm();
   $('#emptyRec')?.addEventListener('click', () => recurringForm());
@@ -706,14 +799,19 @@ async function renderRecurring(el) {
     if (!b) return;
     const r = recs.find((x) => x.id === (b.dataset.pay || b.dataset.edit || b.dataset.del));
     if (b.dataset.edit) recurringForm(r);
-    if (b.dataset.del) confirmModal('Eliminar gasto mensual', `¿Eliminar <b>${esc(r.name)}</b>? Dejarás de recibir sus avisos. Los gastos ya registrados se mantienen.`, async () => {
+    if (b.dataset.del) confirmModal('Eliminar pago fijo', `¿Eliminar <b>${esc(r.name)}</b>? Dejarás de recibir sus avisos. Los gastos ya registrados se mantienen.`, async () => {
       await api('/recurring/' + r.id, { method: 'DELETE' });
-      toast('Gasto mensual eliminado');
+      toast('Pago fijo eliminado');
       route();
     });
-    if (b.dataset.pay) {
-      try { await api(`/recurring/${r.id}/pay`, { method: 'POST' }); toast('Marcado como pagado'); route(); } catch (e) { toast(e.message, true); }
-    }
+    if (b.dataset.pay) openModal({
+      title: `Pagar ${r.name}`,
+      icon: 'check',
+      okText: 'Registrar pago',
+      html: `<p class="set-desc">Se apuntará como gasto de hoy el cobro del <b>${fmtDate(r.nextDue, { day: 'numeric', month: 'long' })}</b>. No se duplicará.</p>
+        <label class="field">Importe pagado<div class="input-money"><input name="amount" type="number" step="0.01" min="0.01" inputmode="decimal" value="${r.amount}" required><span>€</span></div></label>`,
+      onSubmit: async (d) => { await api(`/recurring/${r.id}/pay`, { method: 'POST', body: { amount: Number(d.amount) } }); toast('Pago registrado'); route(); },
+    });
   };
 }
 
@@ -734,10 +832,10 @@ async function renderWeekly(el) {
   <div class="grid g4 stats">
     <div class="card stat"><div class="top"><span class="label">Total</span><span class="ichip">${ic('wallet')}</span></div>
       <div><div class="value">${eur(s.total)}</div><div class="sub">${trendHtml(diff, ' vs. anterior') || 'Sin semana anterior'}</div></div></div>
-    <div class="card stat"><div class="top"><span class="label">Gastos</span><span class="ichip green">${ic('receipt-text')}</span></div>
-      <div><div class="value">${s.count}</div><div class="sub">En ${s.byCategory.length} categorías</div></div></div>
+    <div class="card stat"><div class="top"><span class="label">Ingresos</span><span class="ichip green">${ic('hand-coins')}</span></div>
+      <div><div class="value">${eur(s.incomeTotal)}</div><div class="sub">Balance: ${signed(s.balance)}</div></div></div>
     <div class="card stat"><div class="top"><span class="label">Media diaria</span><span class="ichip amber">${ic('activity')}</span></div>
-      <div><div class="value">${eur(s.avgPerDay)}</div><div class="sub">${best ? `Más gasto el ${best.name.toLowerCase()}` : '—'}</div></div></div>
+      <div><div class="value">${eur(s.avgPerDay)}</div><div class="sub">${s.count} gastos${best ? ` · más el ${best.name.toLowerCase()}` : ''}</div></div></div>
     <div class="card stat"><div class="top"><span class="label">Mayor gasto</span><span class="ichip red">${ic('trophy')}</span></div>
       <div><div class="value">${s.top ? eur(s.top.amount) : '—'}</div><div class="sub">${s.top ? esc(s.top.name) : 'Sin gastos'}</div></div></div>
   </div>
@@ -776,7 +874,7 @@ async function renderWeekly(el) {
 
 // ---------- Ajustes ----------
 async function renderSettings(el) {
-  const mail = await api('/mail/status');
+  const [mail, fin] = await Promise.all([api('/mail/status'), financeSettingsHtml()]);
   const pref = themePref();
   el.innerHTML = `
   <div class="grid g2">
@@ -853,6 +951,9 @@ async function renderSettings(el) {
     route();
   };
   $('#addCat').onclick = () => categoryForm();
+  el.insertAdjacentHTML('beforeend', fin.html);
+  hydrate(el);
+  bindFinanceSettings();
   $('#catList').onclick = (ev) => {
     const b = ev.target.closest('button[data-edit], button[data-del]');
     if (!b) return;
@@ -954,7 +1055,7 @@ function incomeForm(inc = {}) {
       <label class="field">Concepto<input name="name" required maxlength="100" value="${esc(inc.name || '')}" placeholder="Ej: Nómina de noviembre"></label>
       <div class="mini-label">Origen</div><input type="hidden" name="source" value="${sel}">
       <div class="cat-pick" id="srcPick">${Object.keys(SOURCES).map((k) => { const s = srcOf(k); return `<button type="button" data-id="${k}" class="${k === sel ? 'on' : ''}" style="--c:${s.color}">${ic(s.icon)}${s.name}</button>`; }).join('')}</div>
-      <label class="field">Fecha<input name="date" type="date" required value="${inc.date || ymd(todayD())}"></label>
+      <div class="row"><label class="field">Fecha<input name="date" type="date" required value="${inc.date || ymd(todayD())}"></label>${accountSelect(inc.accountId || '')}</div>
       <label class="field">Notas<textarea name="notes" maxlength="500" placeholder="Opcional">${esc(inc.notes || '')}</textarea></label>
       ${inc.id ? `<button type="button" class="btn danger sm" id="delInc">${ic('trash-2', 'sm')}Eliminar ingreso</button>` : ''}`,
     onSubmit: async (d) => {
@@ -963,6 +1064,7 @@ function incomeForm(inc = {}) {
       else await api('/incomes', { method: 'POST', body: d });
       toast(inc.id ? 'Ingreso actualizado' : 'Ingreso añadido');
       route();
+      refreshNotifs();
     },
   });
   const box = $('#srcPick');
@@ -985,11 +1087,14 @@ function deleteIncome(i) {
 function exportModal() {
   const t = todayD();
   openModal({
-    title: 'Exportar a Excel',
+    title: 'Exportar movimientos',
     icon: 'file-spreadsheet',
-    okText: 'Descargar Excel',
+    okText: 'Descargar',
     html: `
-      <p class="set-desc">Se descargará un archivo <b>.xlsx</b> con 5 hojas: resumen mensual, ingresos, gastos, movimientos de ahorro y huchas, con totales y filtros.</p>
+      <div class="mini-label">Formato</div>
+      <div class="seg full" id="fmtSeg"><button type="button" data-f="xlsx" class="on">Excel (.xlsx)</button><button type="button" data-f="csv">CSV</button></div>
+      <input type="hidden" name="fmt" value="xlsx">
+      <p class="set-desc" style="margin-top:10px">El Excel trae 5 hojas con totales y filtros (resumen, ingresos, gastos, ahorro y huchas). El CSV lleva todos los movimientos con cuenta, método de pago y etiquetas.</p>
       <div class="mini-label">Periodo</div>
       <div class="seg full" id="expSeg"><button type="button" data-r="month" class="on">Este mes</button><button type="button" data-r="year">Este año</button><button type="button" data-r="all">Todo</button><button type="button" data-r="custom">Elegir</button></div>
       <input type="hidden" name="range" value="month">
@@ -999,10 +1104,16 @@ function exportModal() {
       if (d.range === 'month') { from = ymd(new Date(t.getFullYear(), t.getMonth(), 1)); to = ymd(new Date(t.getFullYear(), t.getMonth() + 1, 0)); }
       if (d.range === 'year') { from = `${t.getFullYear()}-01-01`; to = `${t.getFullYear()}-12-31`; }
       if (d.range === 'custom') { from = d.from; to = d.to; if (!from || !to || from > to) throw new Error('Revisa las fechas'); }
-      await download(`/export.xlsx${from ? `?from=${from}&to=${to}` : ''}`, 'agenda-gastos.xlsx');
-      toast('Excel descargado');
+      await download(`/export.${d.fmt}${from ? `?from=${from}&to=${to}` : ''}`, 'agenda-gastos.' + d.fmt);
+      toast('Archivo descargado');
     },
   });
+  $('#fmtSeg').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    $$('#fmtSeg button').forEach((x) => x.classList.toggle('on', x === b));
+    $('#modalBody input[name=fmt]').value = b.dataset.f;
+  };
   $('#expSeg').onclick = (e) => {
     const b = e.target.closest('button');
     if (!b) return;
@@ -1720,7 +1831,9 @@ function adminSettings(el, st) {
 // ---------- Aviso global ----------
 const bannerHtml = (txt, type) => `<div class="notice ${type === 'warn' ? 'warn' : type === 'ok' ? 'ok' : ''}">${ic(type === 'warn' ? 'triangle-alert' : type === 'ok' ? 'circle-check' : 'megaphone', 'sm')}<span>${esc(txt)}</span></div>`;
 function renderBanners() {
-  const h = publicCfg.banner ? bannerHtml(publicCfg.banner, publicCfg.bannerType) : '';
+  const env = publicCfg.environment === 'pruebas' ? bannerHtml('Entorno de PRUEBAS: los datos se borran en cada actualización. No uses datos reales.', 'warn') : '';
+  if (env) document.title = '[Pruebas] ' + document.title.replace(/^\[Pruebas\] /, '');
+  const h = env + (publicCfg.banner ? bannerHtml(publicCfg.banner, publicCfg.bannerType) : '');
   $('#appBanner').innerHTML = h;
   $('#authBanner').innerHTML = h;
 }
@@ -1787,8 +1900,14 @@ function forcePasswordChange() {
 // ---------- Menú «Más» (móvil) ----------
 function openMore() {
   const items = [
+    ['ingresos', 'hand-coins', 'Ingresos'],
     ['calendario', 'calendar-days', 'Calendario'],
-    ['mensuales', 'repeat', 'Gastos mensuales'],
+    ['cuentas', 'landmark', 'Cuentas'],
+    ['presupuestos', 'target', 'Presupuestos'],
+    ['mensuales', 'repeat', 'Pagos fijos'],
+    ['previsiones', 'chart-line', 'Previsiones'],
+    ['tickets', 'scan-line', 'Tickets'],
+    ['informes', 'file-text', 'Informes'],
     ['ahorros', 'piggy-bank', 'Ahorros'],
     ['semanal', 'calendar-range', 'Resumen semanal'],
     ['seguridad', 'shield-check', 'Seguridad'],
@@ -1799,7 +1918,7 @@ function openMore() {
   openModal({
     title: 'Más opciones',
     actions: false,
-    html: `<div class="more-list">${items.map(([v, i, t]) => `<a href="#/${v}">${ic(i)}${t}</a>`).join('')}
+    html: `<div class="more-list grid2">${items.map(([v, i, t]) => `<a href="#/${v}">${ic(i)}${t}</a>`).join('')}
       <button type="button" class="danger" id="moreLogout">${ic('log-out')}Cerrar sesión</button></div>`,
   });
   $$('.more-list a').forEach((a) => a.addEventListener('click', closeModal));
@@ -1809,19 +1928,27 @@ function openMore() {
 // ---------- Router ----------
 const addExpense = () => expenseForm({}, location.hash.includes('calendario') ? { date: state.calSel } : {});
 const VIEWS = {
-  dashboard: ['Panel', () => `Hola, ${esc(me.name.split(' ')[0])} · ${todayD().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}`, renderDashboard],
-  gastos: ['Gastos', () => 'Todo lo que has apuntado, día a día', renderExpenses],
+  dashboard: ['Inicio', () => `Hola, ${esc(me.name.split(' ')[0])} · ${todayD().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}`, renderDashboard],
+  gastos: ['Movimientos', () => 'Tus gastos día a día: busca, filtra y exporta', renderExpenses],
   ingresos: ['Ingresos', () => 'Lo que has cobrado, en una tabla que puedes llevar a Excel', renderIncomes, ['Nuevo ingreso', () => incomeForm()]],
-  calendario: ['Calendario', () => 'Tus gastos y cobros en el mes', renderCalendar],
-  mensuales: ['Gastos mensuales', () => 'Cobros fijos con aviso por correo', renderRecurring, ['Nuevo mensual', () => recurringForm()]],
+  calendario: ['Calendario', () => 'Gastos, ingresos y pagos previstos', renderCalendar],
+  cuentas: ['Cuentas', () => 'Tu dinero en cada cuenta, tarjeta y efectivo', (el) => renderAccounts(el), ['Nueva cuenta', () => accountForm()]],
+  presupuestos: ['Presupuestos', () => 'Cuánto puedes gastar y cómo vas este mes', (el) => renderBudgets(el), ['Nuevo presupuesto', () => budgetForm()]],
+  mensuales: ['Pagos fijos', () => 'Recibos, alquiler y suscripciones con aviso antes de cada cobro', renderRecurring, ['Nuevo pago fijo', () => recurringForm()]],
+  previsiones: ['Previsiones', () => 'Cuánto dinero tendrás y si puedes permitirte una compra', (el) => renderForecast(el)],
+  asistente: ['Asistente', () => 'Pregunta lo que quieras sobre tu dinero', (el) => renderAssistant(el)],
+  tickets: ['Tickets', () => 'Escanea tickets y consulta su historial', (el) => renderReceipts(el)],
+  informes: ['Informes', () => 'Estadísticas por periodo, listas para descargar', (el) => renderReports(el)],
   ahorros: ['Ahorros', () => 'Cuánto dinero tienes guardado y para qué', renderSavings, ['Nueva hucha', () => savingForm()]],
   semanal: ['Resumen semanal', () => 'Cómo ha ido tu semana', renderWeekly],
   seguridad: ['Seguridad', () => 'Verificación en dos pasos, contraseña y sesiones', renderSecurity],
-  ajustes: ['Ajustes', () => 'Perfil, avisos, apariencia y categorías', renderSettings],
+  ajustes: ['Ajustes', () => 'Perfil, economía, avisos, apariencia, categorías y tus datos', renderSettings],
   descargar: ['Descargar app', () => 'Úsala en el móvil y en el ordenador', renderDownload],
   admin: ['Administración', () => 'Usuarios, contraseñas, permisos y ajustes de la app', renderAdmin],
 };
+const IN_MORE = ['ingresos', 'calendario', 'cuentas', 'presupuestos', 'mensuales', 'previsiones', 'tickets', 'informes', 'ahorros', 'semanal', 'seguridad', 'ajustes', 'descargar', 'admin'];
 let currentAdd = addExpense;
+let lastNotifCheck = 0;
 async function route() {
   if (!me) return;
   let [v, query] = location.hash.replace('#/', '').split('?');
@@ -1836,13 +1963,13 @@ async function route() {
   $('#viewTitle').textContent = title;
   $('#viewSubtitle').innerHTML = subtitle();
   document.title = `${title} · Agenda de Gastos`;
-  const inMore = ['calendario', 'mensuales', 'ahorros', 'semanal', 'seguridad', 'ajustes', 'descargar', 'admin'].includes(v);
   if (v === 'admin' && !me.isAdmin) { location.hash = '#/dashboard'; return; }
-  $$('#nav a, #tabbar [data-view]').forEach((a) => a.classList.toggle('active', a.dataset.view === v || (a.dataset.view === 'more' && inMore)));
+  $$('#nav a, #tabbar [data-view]').forEach((a) => a.classList.toggle('active', a.dataset.view === v || (a.dataset.view === 'more' && IN_MORE.includes(v))));
   charts.forEach((c) => c.destroy());
   charts = [];
   const view = $('#view');
   if (!view.children.length) view.innerHTML = '<div class="grid g3"><div class="skeleton span2" style="height:190px"></div><div class="skeleton" style="height:190px"></div></div><div class="skeleton" style="height:300px"></div>';
+  if (Date.now() - lastNotifCheck > 60_000) { lastNotifCheck = Date.now(); refreshNotifs(); }
   try {
     await render(view);
     hydrate(view);
@@ -1882,7 +2009,10 @@ async function enter() {
   $('#view').innerHTML = '';
   if (me.mustChangePassword) { forcePasswordChange(); return; }
   cats = await api('/categories');
+  await loadAccounts();
   route();
+  refreshNotifs();
+  api('/finance-settings').then((f) => { me.finance = f; me.onboarded = f.onboarded; if (!f.onboarded && !accs.length) setTimeout(onboarding, 600); }).catch(() => {});
   api('/recurring').then((recs) => { updateDueBadge(recs); notifyUpcoming(recs); }).catch(() => {});
 }
 
