@@ -963,3 +963,110 @@ dialog:has(#modalBody.wide) { width: min(860px, calc(100vw - 32px)); }
 .toolbar input[type=date] { width: auto; flex: 0 0 auto; }
 @media (max-width: 900px) { .toolbar input[type=date] { flex: 1; min-width: 0; } }
 @media (max-width: 900px) { .topbar #notifBtn { display: none; } }
+
+/* ============ Menú por secciones con pestañas ============ */
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav-sep { height: 1px; background: var(--border); margin: 10px 6px; }
+.subnav { display: flex; gap: 4px; margin: -4px 0 16px; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+.subnav::-webkit-scrollbar { display: none; }
+.subnav a { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; font-size: 13.5px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.subnav a:hover { color: var(--text); }
+.subnav a.on { color: var(--primary); border-bottom-color: var(--primary); }
+.subnav .count { font-size: 11px; font-weight: 700; background: var(--warn-soft); color: var(--warn); border-radius: 99px; padding: 0 6px; }
+
+/* ============ Versión compacta ============ */
+:root { --sidebar-w: 216px; --radius: 14px; --radius-sm: 10px; }
+body { font-size: 14px; }
+input, select, textarea { font-size: 14px; }
+.sidebar { padding: 16px 10px 12px; }
+.sidebar .brand { padding: 0 8px 18px; font-size: 15px; }
+.brand { font-size: 15px; gap: 9px; }
+.logo { width: 32px; height: 32px; border-radius: 10px; }
+.brand small { font-size: 11.5px; }
+.nav a { padding: 8px 10px; gap: 10px; font-size: 13.5px; border-radius: 10px; }
+.nav a .i { width: 18px; height: 18px; }
+.user-card { padding: 8px; gap: 9px; border-radius: 12px; }
+.avatar { width: 32px; height: 32px; border-radius: 10px; font-size: 13px; }
+.user-card b { font-size: 13px; }
+.user-card small { font-size: 11px; }
+main { padding: 20px 28px 40px; }
+.topbar { margin-bottom: 16px; }
+.topbar h1 { font-size: 22px; }
+.topbar .subtitle { font-size: 13px; margin-top: 1px; }
+.btn { height: 36px; padding: 0 13px; font-size: 13.5px; border-radius: 10px; gap: 6px; }
+.btn.sm { height: 30px; padding: 0 10px; font-size: 12.5px; border-radius: 8px; }
+.btn.lg { height: 42px; font-size: 14px; }
+.icon-btn { width: 34px; height: 34px; border-radius: 10px; }
+.icon-btn.sm { width: 28px; height: 28px; border-radius: 8px; }
+.card { padding: 16px; }
+.card-head { margin-bottom: 12px; }
+.card-head h3 { font-size: 14.5px; gap: 8px; }
+.grid { gap: 14px; margin-bottom: 14px; }
+.hero { padding: 20px 22px; min-height: 150px; border-radius: 18px; gap: 14px; }
+.hero .amount { font-size: 34px; }
+.hero .label { font-size: 13px; }
+.hero .pill { font-size: 12px; margin-top: 8px; }
+.hero .foot { gap: 22px; font-size: 12px; }
+.hero .foot b { font-size: 15px; }
+.stat { gap: 8px; }
+.stat .label { font-size: 12.5px; }
+.stat .value { font-size: 21px; }
+.stat .sub { font-size: 12px; margin-top: 2px; }
+.ichip { width: 34px; height: 34px; border-radius: 10px; }
+.ichip.sm { width: 30px; height: 30px; border-radius: 9px; }
+.ichip .i { width: 17px; height: 17px; }
+.cat-ic { width: 36px; height: 36px; border-radius: 11px; }
+.cat-ic.sm { width: 30px; height: 30px; border-radius: 9px; }
+.cat-ic.sm .i { width: 15px; height: 15px; }
+.li { gap: 11px; padding: 8px; }
+.li .main b { font-size: 13.5px; }
+.li .main small { font-size: 12px; }
+.li .amt { font-size: 13.5px; }
+.chart-box { height: 220px; }
+.chart-box.sm { height: 180px; }
+.chart-box.lg { height: 280px; }
+.donut-wrap { height: 160px; }
+.legend .lg { font-size: 12.5px; }
+.seg { border-radius: 10px; padding: 3px; }
+.seg button { height: 30px; padding: 0 11px; font-size: 12.5px; border-radius: 8px; }
+.summary-strip { gap: 22px; padding: 2px 0 12px; margin-bottom: 10px; }
+label.field { font-size: 12.5px; margin-bottom: 12px; gap: 5px; }
+dialog { width: min(460px, calc(100vw - 32px)); border-radius: 18px; }
+dialog form { padding: 20px; }
+.modal-head { margin-bottom: 14px; }
+.modal-head h2 { font-size: 17px; }
+.notice { padding: 10px 12px; font-size: 13px; border-radius: 12px; }
+.cal .day { min-height: 78px; padding: 5px 6px; border-radius: 10px; }
+.acc-balance { font-size: 23px; margin: 12px 0 4px; }
+.budget-main .bm-row b { font-size: 16px; }
+.tip-mini { padding: 9px 0; }
+.tip-mini b { font-size: 13.5px; }
+.bubble { font-size: 14px; padding: 10px 13px; }
+.chat-log { min-height: 300px; padding: 16px; }
+.rec-card .amount { font-size: 17px; }
+
+@media (max-width: 900px) {
+  main { padding: 12px 14px calc(90px + env(safe-area-inset-bottom)); }
+  input, select, textarea { font-size: 16px; } /* evita el zoom automático en iPhone */
+  .topbar { margin: 4px 0 12px; }
+  .topbar h1 { font-size: 20px; }
+  .card { padding: 14px; }
+  .grid { gap: 10px; margin-bottom: 10px; }
+  .hero { padding: 18px; }
+  .hero .amount { font-size: 30px; }
+  .stat .value { font-size: 18px; }
+  .g4.stats { gap: 10px; }
+  .chart-box { height: 200px; }
+  .subnav { margin: 0 -14px 12px; padding: 0 10px; }
+  .cal .day { min-height: 50px; }
+  .tabbar a, .tabbar button { font-size: 10.5px; }
+}
+.btn-group { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+@media (max-width: 900px) {
+  .toolbar select { flex: 1 1 140px; min-width: 130px; }
+  .toolbar .month-nav { flex: 1 1 100%; justify-content: space-between; }
+  .summary-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .summary-strip div b { font-size: 16px; }
+  .li .row-actions { display: none; }
+  .subnav a { padding: 8px 9px; font-size: 13px; }
+}

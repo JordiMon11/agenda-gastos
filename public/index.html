@@ -79,35 +79,15 @@
     <aside class="sidebar">
       <div class="brand"><span class="logo"><i data-i="wallet"></i></span><div>Agenda de Gastos<small>Tus finanzas, en orden</small></div></div>
       <nav class="nav" id="nav">
-        <div class="nav-group">
-          <div class="nav-label">General</div>
-          <a href="#/dashboard" data-view="dashboard"><i data-i="layout-dashboard"></i>Inicio</a>
-          <a href="#/gastos" data-view="gastos"><i data-i="receipt-text"></i>Movimientos</a>
-          <a href="#/ingresos" data-view="ingresos"><i data-i="hand-coins"></i>Ingresos</a>
-          <a href="#/calendario" data-view="calendario"><i data-i="calendar-days"></i>Calendario</a>
-          <a href="#/cuentas" data-view="cuentas"><i data-i="landmark"></i>Cuentas</a>
-        </div>
-        <div class="nav-group">
-          <div class="nav-label">Planificación</div>
-          <a href="#/presupuestos" data-view="presupuestos"><i data-i="target"></i>Presupuestos</a>
-          <a href="#/mensuales" data-view="mensuales"><i data-i="repeat"></i>Pagos fijos<span class="count hidden" id="dueCount"></span></a>
-          <a href="#/previsiones" data-view="previsiones"><i data-i="chart-line"></i>Previsiones</a>
-          <a href="#/ahorros" data-view="ahorros"><i data-i="piggy-bank"></i>Ahorros</a>
-        </div>
-        <div class="nav-group">
-          <div class="nav-label">Inteligencia</div>
-          <a href="#/asistente" data-view="asistente"><i data-i="bot"></i>Asistente IA</a>
-          <a href="#/tickets" data-view="tickets"><i data-i="scan-line"></i>Escáner de tickets</a>
-          <a href="#/informes" data-view="informes"><i data-i="file-text"></i>Informes</a>
-          <a href="#/semanal" data-view="semanal"><i data-i="calendar-range"></i>Resumen semanal</a>
-        </div>
-        <div class="nav-group">
-          <div class="nav-label">Cuenta</div>
-          <a href="#/seguridad" data-view="seguridad"><i data-i="shield-check"></i>Seguridad<span class="count hidden" id="secWarn">!</span></a>
-          <a href="#/ajustes" data-view="ajustes"><i data-i="settings"></i>Ajustes</a>
-          <a href="#/admin" data-view="admin" id="navAdmin" class="hidden"><i data-i="user-cog"></i>Administración</a>
-          <a href="#/descargar" data-view="descargar" class="nav-download"><i data-i="download"></i>Descargar app</a>
-        </div>
+        <a href="#/dashboard" data-group="dashboard"><i data-i="layout-dashboard"></i>Inicio</a>
+        <a href="#/gastos" data-group="movimientos"><i data-i="receipt-text"></i>Movimientos<span class="count hidden" id="dueCount"></span></a>
+        <a href="#/calendario" data-group="calendario"><i data-i="calendar-days"></i>Calendario</a>
+        <a href="#/cuentas" data-group="dinero"><i data-i="wallet"></i>Mi dinero</a>
+        <a href="#/presupuestos" data-group="plan"><i data-i="target"></i>Planificación</a>
+        <a href="#/asistente" data-group="asistente"><i data-i="bot"></i>Asistente IA</a>
+        <a href="#/informes" data-group="informes"><i data-i="file-text"></i>Informes</a>
+        <div class="nav-sep"></div>
+        <a href="#/ajustes" data-group="ajustes"><i data-i="settings"></i>Ajustes<span class="count hidden" id="secWarn">!</span></a>
       </nav>
       <div class="spacer"></div>
       <div class="user-card">
@@ -138,15 +118,16 @@
           <button class="btn primary btn-add" id="btnAdd"><i data-i="plus"></i><span id="btnAddTxt">Nuevo gasto</span></button>
         </div>
       </header>
+      <nav class="subnav hidden" id="subnav"></nav>
       <section id="view"></section>
     </main>
 
     <nav class="tabbar" id="tabbar">
-      <a href="#/dashboard" data-view="dashboard"><i data-i="layout-dashboard"></i>Inicio</a>
-      <a href="#/gastos" data-view="gastos"><i data-i="receipt-text"></i>Movimientos</a>
+      <a href="#/dashboard" data-group="dashboard"><i data-i="layout-dashboard"></i>Inicio</a>
+      <a href="#/gastos" data-group="movimientos"><i data-i="receipt-text"></i>Movimientos</a>
       <button class="tab-add" id="fabAdd" aria-label="Nuevo gasto"><span class="plus"><i data-i="plus"></i></span></button>
-      <a href="#/asistente" data-view="asistente"><i data-i="bot"></i>Asistente</a>
-      <button id="moreBtn" data-view="more"><i data-i="ellipsis"></i>Más</button>
+      <a href="#/asistente" data-group="asistente"><i data-i="bot"></i>Asistente</a>
+      <button id="moreBtn" data-group="more"><i data-i="ellipsis"></i>Más</button>
     </nav>
   </div>
 

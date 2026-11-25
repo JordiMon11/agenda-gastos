@@ -212,6 +212,8 @@ function periodReport(user, from, to) {
     byCategory: byCategory(user, exps),
     byMerchant: merchants(user, exps).slice(0, 10),
     byMonth: months.map((m) => ({ month: m, label: monthLabel(m), expenses: sum(exps.filter((e) => e.date.startsWith(m))), incomes: sum(incs.filter((e) => e.date.startsWith(m))) })),
+    // En periodos cortos (semana o fechas de hasta 31 días) el gráfico va por días
+    byDay: len <= 31 ? [...Array(len)].map((_, i) => { const d = D.ymd(D.addDays(D.parse(from), i)); return { date: d, expenses: sum(exps.filter((e) => e.date === d)), incomes: sum(incs.filter((e) => e.date === d)) }; }) : null,
     top: [...exps].sort((a, b) => b.amount - a.amount).slice(0, 5).map((e) => ({ ...e, category: catInfo(user.id, e.categoryId) })),
     recurring: subscriptions(user),
     recurringTotal: round(subscriptions(user).reduce((a, s) => a + s.monthly, 0)),

@@ -128,6 +128,7 @@ document.addEventListener('click', (e) => {
   if (act === 'new-saving') savingForm();
   if (act === 'retry') route();
   if (act === 'onboarding') onboarding();
+  if (act === 'scan') pickReceipt();
 });
 
 // ---------- Tema ----------
@@ -480,13 +481,6 @@ async function renderDashboard(el) {
       <div><div class="value ${eom && eom.realistic < 0 ? 'neg' : ''}">${eom ? eur(eom.realistic) : '—'}</div><div class="sub">Fiabilidad ${ov.confidence.label.toLowerCase()}</div></div></a>
   </div>
 
-  ${ov.alerts.length || ov.tips.length ? `<div class="grid g3">
-    <div class="card span2"><div class="card-head"><h3>${ic('lightbulb', 'sm')}Consejos para mejorar tus finanzas</h3><a class="link" href="#/asistente?tab=consejos">Ver todos${ic('chevron-right', 'xs')}</a></div>
-      <div class="tips-mini">${ov.tips.map((r) => `<a href="${esc(r.action.href)}" class="tip-mini"><span class="ichip sm ${r.priority === 'alta' ? 'red' : r.priority === 'media' ? 'amber' : ''}">${ic('lightbulb', 'sm')}</span><span><b>${esc(r.title)}</b><small>${esc(r.evidence[0] || r.text)}</small></span>${r.potential ? `<em>≈ ${eurShort(r.potential)}/mes</em>` : ''}</a>`).join('') || emptyHtml('party-popper', 'Todo en orden', 'Cuando tengamos más datos te daremos consejos personalizados.')}</div></div>
-    <div class="card"><div class="card-head"><h3>${ic('bell-ring', 'sm')}Previsiones</h3></div>
-      <div class="alert-list">${ov.alerts.map((a) => `<div class="notice ${a.level === 'danger' ? 'danger' : a.level === 'warn' ? 'warn' : a.level === 'ok' ? 'ok' : ''}">${ic(a.level === 'danger' || a.level === 'warn' ? 'triangle-alert' : 'info', 'sm')}<span>${esc(a.text)}</span></div>`).join('') || emptyHtml('circle-check', 'Sin alertas', '')}</div></div>
-  </div>` : ''}
-
   <div class="grid g3">
     <div class="card span2">
       <div class="card-head"><h3>${ic('chart-column', 'sm')}Ingresos y gastos</h3><span class="badge">Últimos 6 meses</span></div>
@@ -500,10 +494,12 @@ async function renderDashboard(el) {
   </div>
 
   <div class="grid g3">
-    <div class="card span2">
-      <div class="card-head"><h3>${ic('chart-line', 'sm')}Saldo: evolución y previsión</h3><a class="link" href="#/previsiones">Detalle${ic('chevron-right', 'xs')}</a></div>
-      ${m.hasAccounts ? '<div class="chart-box sm"><canvas id="cBal"></canvas></div>' : emptyHtml('chart-line', 'Añade tus cuentas', 'Con el saldo de tus cuentas te mostramos cómo evolucionará.', `<a class="btn sm" href="#/cuentas">${ic('plus', 'sm')}Añadir cuenta</a>`)}
-    </div>
+    <div class="card span2"><div class="card-head"><h3>${ic('lightbulb', 'sm')}Consejos y avisos</h3><a class="link" href="#/asistente?tab=consejos">Ver todos${ic('chevron-right', 'xs')}</a></div>
+      <div class="tips-mini">
+        ${ov.alerts.filter((a) => a.level === 'danger' || a.level === 'warn').slice(0, 2).map((a) => `<a href="#/previsiones" class="tip-mini"><span class="ichip sm ${a.level === 'danger' ? 'red' : 'amber'}">${ic('triangle-alert', 'sm')}</span><span><b>${esc(a.text)}</b></span></a>`).join('')}
+        ${ov.tips.map((r) => `<a href="${esc(r.action.href)}" class="tip-mini"><span class="ichip sm ${r.priority === 'alta' ? 'red' : r.priority === 'media' ? 'amber' : ''}">${ic('lightbulb', 'sm')}</span><span><b>${esc(r.title)}</b><small>${esc(r.evidence[0] || r.text)}</small></span>${r.potential ? `<em>≈ ${eurShort(r.potential)}/mes</em>` : ''}</a>`).join('')}
+        ${!ov.tips.length && !ov.alerts.some((a) => a.level === 'danger' || a.level === 'warn') ? emptyHtml('party-popper', 'Todo en orden', 'Cuando tengamos más datos te daremos consejos personalizados.') : ''}
+      </div></div>
     <div class="card">
       <div class="card-head"><h3>${ic('target', 'sm')}Presupuestos</h3><a class="link" href="#/presupuestos">Ver${ic('chevron-right', 'xs')}</a></div>
       <div class="list">${ov.budgets.map((b) => `<div class="li"><div class="main"><div class="bl-top"><b>${esc(b.category?.name || 'General')}</b><small>${eur(b.spent)} / ${eur(b.amount)}</small></div>${bar(b.percent, b.level.key)}</div></div>`).join('')
@@ -538,22 +534,6 @@ async function renderDashboard(el) {
     },
     options: { ...barOpts, plugins: { ...barOpts.plugins, legend: { display: true, position: 'bottom', labels: { boxWidth: 12 } }, tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${eur(c.parsed.y)}` } } } },
   });
-  if (m.hasAccounts) {
-    const hist = ov.history;
-    const fut = ov.forecastSeries;
-    const labels = [...hist.map((x) => x.date), ...fut.slice(1).map((x) => x.date)];
-    chart($('#cBal'), {
-      type: 'line',
-      data: {
-        labels: labels.map((d) => fmtDate(d)),
-        datasets: [
-          { label: 'Saldo', data: [...hist.map((x) => x.balance), ...fut.slice(1).map(() => null)], borderColor: cssVar('--text-2'), borderWidth: 2, pointRadius: 0, tension: 0.3 },
-          { label: 'Previsto', data: [...hist.slice(0, -1).map(() => null), fut[0]?.realistic ?? null, ...fut.slice(1).map((x) => x.realistic)], borderColor: cssVar('--primary'), borderDash: [6, 4], borderWidth: 2.5, pointRadius: 0, tension: 0.3 },
-        ],
-      },
-      options: { ...barOpts, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => (c.parsed.y == null ? null : ` ${c.dataset.label}: ${eur(c.parsed.y)}`) } } }, scales: { y: { ...moneyAxis, beginAtZero: false }, x: { grid: { display: false }, border: { display: false }, ticks: { maxTicksLimit: 7 } } } },
-    });
-  }
 }
 
 // ---------- Gastos ----------
@@ -761,10 +741,6 @@ async function renderRecurring(el) {
     <div class="card stat"><div class="top"><span class="label">Pendiente este mes</span><span class="ichip ${overdue.length ? 'red' : 'amber'}">${ic('hourglass')}</span></div>
       <div><div class="value">${eur(pending)}</div><div class="sub">${overdue.length ? `<span class="neg">${overdue.length} atrasado${overdue.length === 1 ? '' : 's'}</span>` : `${ic('mail', 'xs')}Avisos a ${esc(me.email)}`}</div></div></div>
   </div>
-  <div class="toolbar" style="justify-content:space-between">
-    <div class="muted" style="font-size:14px">Alquiler, recibos, seguros, suscripciones… con cualquier frecuencia. Te avisamos antes de cada cobro.</div>
-    <button class="btn primary" id="addRec">${ic('plus', 'sm')}Nuevo pago fijo</button>
-  </div>
   <div class="grid g3" id="recs">
     ${recs.map((r) => {
       const c = catOf(r.categoryId);
@@ -792,7 +768,6 @@ async function renderRecurring(el) {
       </div>`;
     }).join('') || `<div class="card span2">${emptyHtml('repeat', 'Aún no tienes pagos fijos', 'Añade tu alquiler, la luz, internet, seguros o suscripciones y recibirás un aviso antes de cada cobro.', `<button class="btn primary sm" id="emptyRec">${ic('plus', 'sm')}Añadir el primero</button>`)}</div>`}
   </div>`;
-  $('#addRec').onclick = () => recurringForm();
   $('#emptyRec')?.addEventListener('click', () => recurringForm());
   $('#recs').onclick = async (ev) => {
     const b = ev.target.closest('button[data-pay], button[data-edit], button[data-del]');
@@ -1164,7 +1139,7 @@ async function renderIncomes(el) {
       ${srcItems.length ? `<div class="donut-wrap"><canvas id="cSrc"></canvas><div class="donut-center"><div><b>${eurShort(totalInc)}</b><small>ingresos</small></div></div></div>${legendHtml(srcItems, totalInc)}` : emptyHtml('hand-coins', 'Sin ingresos este mes', '')}</div>
   </div>
   <div class="card">
-    <div class="card-head"><h3>${ic('file-spreadsheet', 'sm')}Tabla de ingresos</h3><button class="btn sm primary" data-act="new-income">${ic('plus', 'sm')}Nuevo ingreso</button></div>
+    <div class="card-head"><h3>${ic('file-spreadsheet', 'sm')}Tabla de ingresos</h3></div>
     <div id="iTable"></div>
   </div>`;
   $('#iSrc').value = incState.source;
@@ -1333,10 +1308,6 @@ async function renderSavings(el) {
         <div class="amt ${m.type === 'in' ? 'move-in' : 'move-out'}">${m.type === 'in' ? '+' : '−'}${eur(m.amount)}</div>
         <button class="icon-btn sm danger" data-delmv="${m.id}" title="Borrar movimiento">${ic('x', 'sm')}</button></div>`; }).join('') || emptyHtml('history', 'Sin movimientos', 'Crea una hucha y haz tu primera aportación.')}</div>
     </div>
-  </div>
-  <div class="toolbar" style="justify-content:space-between">
-    <div class="muted" style="font-size:14px">Separa tu dinero en huchas, cada una con su objetivo.</div>
-    <button class="btn primary" data-act="new-saving">${ic('plus', 'sm')}Nueva hucha</button>
   </div>
   <div class="grid g3" id="savs">
     ${savs.map((s) => {
@@ -1897,28 +1868,26 @@ function forcePasswordChange() {
   $('#fpLogout').onclick = () => { modalLocked = false; closeModal(); logout(); };
 }
 
+// ---------- Secciones del menú (cada una con sus pestañas) ----------
+const GROUPS = {
+  dashboard: { label: 'Inicio', icon: 'layout-dashboard', views: ['dashboard'] },
+  movimientos: { label: 'Movimientos', icon: 'receipt-text', views: ['gastos', 'ingresos', 'mensuales', 'tickets'] },
+  calendario: { label: 'Calendario', icon: 'calendar-days', views: ['calendario'] },
+  dinero: { label: 'Mi dinero', icon: 'wallet', views: ['cuentas', 'ahorros'] },
+  plan: { label: 'Planificación', icon: 'target', views: ['presupuestos', 'previsiones'] },
+  asistente: { label: 'Asistente IA', icon: 'bot', views: ['asistente'] },
+  informes: { label: 'Informes', icon: 'file-text', views: ['informes'] },
+  ajustes: { label: 'Ajustes', icon: 'settings', views: ['ajustes', 'seguridad', 'admin', 'descargar'] },
+};
+const groupOf = (v) => Object.keys(GROUPS).find((g) => GROUPS[g].views.includes(v)) || 'dashboard';
+
 // ---------- Menú «Más» (móvil) ----------
 function openMore() {
-  const items = [
-    ['ingresos', 'hand-coins', 'Ingresos'],
-    ['calendario', 'calendar-days', 'Calendario'],
-    ['cuentas', 'landmark', 'Cuentas'],
-    ['presupuestos', 'target', 'Presupuestos'],
-    ['mensuales', 'repeat', 'Pagos fijos'],
-    ['previsiones', 'chart-line', 'Previsiones'],
-    ['tickets', 'scan-line', 'Tickets'],
-    ['informes', 'file-text', 'Informes'],
-    ['ahorros', 'piggy-bank', 'Ahorros'],
-    ['semanal', 'calendar-range', 'Resumen semanal'],
-    ['seguridad', 'shield-check', 'Seguridad'],
-    ['ajustes', 'settings', 'Ajustes'],
-    ...(me?.isAdmin ? [['admin', 'user-cog', 'Administración']] : []),
-    ...(IS_ELECTRON ? [] : [['descargar', 'download', 'Descargar app']]),
-  ];
+  const items = ['calendario', 'dinero', 'plan', 'informes', 'ajustes'].map((g) => [GROUPS[g].views[0], GROUPS[g].icon, GROUPS[g].label]);
   openModal({
-    title: 'Más opciones',
+    title: 'Más',
     actions: false,
-    html: `<div class="more-list grid2">${items.map(([v, i, t]) => `<a href="#/${v}">${ic(i)}${t}</a>`).join('')}
+    html: `<div class="more-list">${items.map(([v, i, t]) => `<a href="#/${v}">${ic(i)}${t}</a>`).join('')}
       <button type="button" class="danger" id="moreLogout">${ic('log-out')}Cerrar sesión</button></div>`,
   });
   $$('.more-list a').forEach((a) => a.addEventListener('click', closeModal));
@@ -1927,48 +1896,60 @@ function openMore() {
 
 // ---------- Router ----------
 const addExpense = () => expenseForm({}, location.hash.includes('calendario') ? { date: state.calSel } : {});
+// [título de la pestaña, subtítulo, función que la pinta, botón principal opcional]
 const VIEWS = {
   dashboard: ['Inicio', () => `Hola, ${esc(me.name.split(' ')[0])} · ${todayD().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}`, renderDashboard],
-  gastos: ['Movimientos', () => 'Tus gastos día a día: busca, filtra y exporta', renderExpenses],
-  ingresos: ['Ingresos', () => 'Lo que has cobrado, en una tabla que puedes llevar a Excel', renderIncomes, ['Nuevo ingreso', () => incomeForm()]],
+  gastos: ['Gastos', () => 'Tus gastos día a día: busca, filtra y exporta', renderExpenses],
+  ingresos: ['Ingresos', () => 'Lo que has cobrado', renderIncomes, ['Nuevo ingreso', () => incomeForm()]],
+  mensuales: ['Pagos fijos', () => 'Recibos, alquiler y suscripciones con aviso antes de cada cobro', renderRecurring, ['Nuevo pago fijo', () => recurringForm()]],
+  tickets: ['Tickets', () => 'Escanea tickets y consulta su historial', (el) => renderReceipts(el), ['Escanear ticket', () => pickReceipt()]],
   calendario: ['Calendario', () => 'Gastos, ingresos y pagos previstos', renderCalendar],
   cuentas: ['Cuentas', () => 'Tu dinero en cada cuenta, tarjeta y efectivo', (el) => renderAccounts(el), ['Nueva cuenta', () => accountForm()]],
+  ahorros: ['Ahorros', () => 'Cuánto tienes guardado y para qué', renderSavings, ['Nueva hucha', () => savingForm()]],
   presupuestos: ['Presupuestos', () => 'Cuánto puedes gastar y cómo vas este mes', (el) => renderBudgets(el), ['Nuevo presupuesto', () => budgetForm()]],
-  mensuales: ['Pagos fijos', () => 'Recibos, alquiler y suscripciones con aviso antes de cada cobro', renderRecurring, ['Nuevo pago fijo', () => recurringForm()]],
-  previsiones: ['Previsiones', () => 'Cuánto dinero tendrás y si puedes permitirte una compra', (el) => renderForecast(el)],
-  asistente: ['Asistente', () => 'Pregunta lo que quieras sobre tu dinero', (el) => renderAssistant(el)],
-  tickets: ['Tickets', () => 'Escanea tickets y consulta su historial', (el) => renderReceipts(el)],
-  informes: ['Informes', () => 'Estadísticas por periodo, listas para descargar', (el) => renderReports(el)],
-  ahorros: ['Ahorros', () => 'Cuánto dinero tienes guardado y para qué', renderSavings, ['Nueva hucha', () => savingForm()]],
-  semanal: ['Resumen semanal', () => 'Cómo ha ido tu semana', renderWeekly],
+  previsiones: ['Previsiones', () => 'Cuánto tendrás y si puedes permitirte una compra', (el) => renderForecast(el)],
+  asistente: ['Asistente IA', () => 'Pregunta lo que quieras sobre tu dinero', (el) => renderAssistant(el)],
+  informes: ['Informes', () => 'Resumen de la semana, el mes o el año, listo para descargar', (el) => renderReports(el)],
+  ajustes: ['General', () => 'Perfil, economía, avisos, apariencia, categorías y tus datos', renderSettings],
   seguridad: ['Seguridad', () => 'Verificación en dos pasos, contraseña y sesiones', renderSecurity],
-  ajustes: ['Ajustes', () => 'Perfil, economía, avisos, apariencia, categorías y tus datos', renderSettings],
-  descargar: ['Descargar app', () => 'Úsala en el móvil y en el ordenador', renderDownload],
   admin: ['Administración', () => 'Usuarios, contraseñas, permisos y ajustes de la app', renderAdmin],
+  descargar: ['Descargar app', () => 'Úsala en el móvil y en el ordenador', renderDownload],
 };
-const IN_MORE = ['ingresos', 'calendario', 'cuentas', 'presupuestos', 'mensuales', 'previsiones', 'tickets', 'informes', 'ahorros', 'semanal', 'seguridad', 'ajustes', 'descargar', 'admin'];
+const TAB_ICON = { gastos: 'receipt-text', ingresos: 'hand-coins', mensuales: 'repeat', tickets: 'scan-line', cuentas: 'landmark', ahorros: 'piggy-bank', presupuestos: 'target', previsiones: 'chart-line', ajustes: 'settings', seguridad: 'shield-check', admin: 'user-cog', descargar: 'download' };
+function renderSubnav(v) {
+  const g = GROUPS[groupOf(v)];
+  const tabs = g.views.filter((x) => (x !== 'admin' || me.isAdmin) && (x !== 'descargar' || !IS_ELECTRON));
+  const nav = $('#subnav');
+  nav.classList.toggle('hidden', tabs.length < 2);
+  nav.innerHTML = tabs.map((x) => `<a href="#/${x}" class="${x === v ? 'on' : ''}">${ic(TAB_ICON[x] || 'tag', 'sm')}${VIEWS[x][0]}${x === 'seguridad' && !me.twoFactor ? '<span class="count">!</span>' : ''}</a>`).join('');
+}
 let currentAdd = addExpense;
 let lastNotifCheck = 0;
 async function route() {
   if (!me) return;
   let [v, query] = location.hash.replace('#/', '').split('?');
+  // El antiguo «Resumen semanal» ahora es el informe por semanas
+  if (v === 'semanal') { state.repKind = 'semana'; state.repAnchor = ymd(todayD()); history.replaceState(null, '', '#/informes'); v = 'informes'; }
   if (!VIEWS[v]) v = 'dashboard';
+  if (v === 'admin' && !me.isAdmin) { location.hash = '#/dashboard'; return; }
   const [title, subtitle, render, add] = VIEWS[v];
+  const group = groupOf(v);
   currentAdd = add ? add[1] : addExpense;
   $('#btnAddTxt').textContent = add ? add[0] : 'Nuevo gasto';
+  $('#btnScan').classList.toggle('hidden', v === 'tickets');
   if (query?.includes('nuevo=1')) {
     history.replaceState(null, '', '#/' + v);
     setTimeout(() => currentAdd(), 0);
   }
-  $('#viewTitle').textContent = title;
+  $('#viewTitle').textContent = GROUPS[group].views.length > 1 ? GROUPS[group].label : title;
   $('#viewSubtitle').innerHTML = subtitle();
   document.title = `${title} · Agenda de Gastos`;
-  if (v === 'admin' && !me.isAdmin) { location.hash = '#/dashboard'; return; }
-  $$('#nav a, #tabbar [data-view]').forEach((a) => a.classList.toggle('active', a.dataset.view === v || (a.dataset.view === 'more' && IN_MORE.includes(v))));
+  renderSubnav(v);
+  $$('#nav a, #tabbar [data-group]').forEach((a) => a.classList.toggle('active', a.dataset.group === group || (a.dataset.group === 'more' && !['dashboard', 'movimientos', 'asistente'].includes(group))));
   charts.forEach((c) => c.destroy());
   charts = [];
   const view = $('#view');
-  if (!view.children.length) view.innerHTML = '<div class="grid g3"><div class="skeleton span2" style="height:190px"></div><div class="skeleton" style="height:190px"></div></div><div class="skeleton" style="height:300px"></div>';
+  if (!view.children.length) view.innerHTML = '<div class="grid g3"><div class="skeleton span2" style="height:170px"></div><div class="skeleton" style="height:170px"></div></div><div class="skeleton" style="height:260px"></div>';
   if (Date.now() - lastNotifCheck > 60_000) { lastNotifCheck = Date.now(); refreshNotifs(); }
   try {
     await render(view);
@@ -1988,7 +1969,6 @@ function setUser() {
   $('#avatar').textContent = initial;
   $('#avatarMobile').textContent = initial;
   $('#secWarn').classList.toggle('hidden', !!me.twoFactor);
-  $('#navAdmin').classList.toggle('hidden', !me.isAdmin);
 }
 function showAuth() {
   me = null;

@@ -548,14 +548,18 @@ async function renderReports(el) {
   const dPrev = pct(r.expenses, r.previous.expenses);
   const dYear = pct(r.expenses, r.lastYear.expenses);
   const months = r.history || r.byMonth;
+  const daily = state.repKind !== 'mes' && r.byDay;
   el.innerHTML = `
   <div class="toolbar no-print">
     <div class="seg" id="rKind">${[['semana', 'Semana'], ['mes', 'Mes'], ['trimestre', 'Trimestre'], ['anio', 'Año'], ['custom', 'Fechas']].map(([k, l]) => `<button data-k="${k}" class="${state.repKind === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     ${state.repKind === 'custom' ? `<input type="date" id="rFrom" value="${from}"><input type="date" id="rTo" value="${to}">` : `<div class="month-nav"><button class="icon-btn" id="rPrev">${ic('chevron-left')}</button><span class="lbl">${esc(label)}</span><button class="icon-btn" id="rNext">${ic('chevron-right')}</button></div>`}
     <div class="grow"></div>
-    <button class="btn" id="rPdf">${ic('printer', 'sm')}PDF</button>
-    <button class="btn" id="rCsv">${ic('file-down', 'sm')}CSV</button>
-    <button class="btn" id="rXls">${ic('file-spreadsheet', 'sm')}Excel</button>
+    <div class="btn-group">
+      ${state.repKind === 'semana' ? `<button class="btn sm" id="rMail" title="Enviar por correo">${ic('send', 'sm')}Correo</button>` : ''}
+      <button class="btn sm" id="rPdf" title="Guardar como PDF">${ic('printer', 'sm')}PDF</button>
+      <button class="btn sm" id="rCsv" title="Descargar CSV">${ic('file-down', 'sm')}CSV</button>
+      <button class="btn sm" id="rXls" title="Descargar Excel">${ic('file-spreadsheet', 'sm')}Excel</button>
+    </div>
   </div>
   <h2 class="print-only">Informe financiero · ${esc(label)}</h2>
   <div class="grid g4 stats">
@@ -565,7 +569,7 @@ async function renderReports(el) {
     <div class="card stat"><div class="top"><span class="label">Tasa de ahorro</span><span class="ichip amber">${ic('piggy-bank')}</span></div><div><div class="value">${r.savingsRate === null ? '—' : r.savingsRate + ' %'}</div><div class="sub">${eur(r.saved)} a tus huchas</div></div></div>
   </div>
   <div class="grid g3">
-    <div class="card span2"><div class="card-head"><h3>${ic('chart-column', 'sm')}${state.repKind === 'mes' ? 'Evolución mensual' : 'Por meses'}</h3></div><div class="chart-box"><canvas id="cRMonths"></canvas></div></div>
+    <div class="card span2"><div class="card-head"><h3>${ic('chart-column', 'sm')}${state.repKind === 'mes' ? 'Evolución mensual' : daily ? 'Por días' : 'Por meses'}</h3></div><div class="chart-box"><canvas id="cRMonths"></canvas></div></div>
     <div class="card"><div class="card-head"><h3>${ic('chart-pie', 'sm')}Por categoría</h3></div>
       ${r.byCategory.length ? `<div class="donut-wrap"><canvas id="cRCat"></canvas><div class="donut-center"><div><b>${eurShort(r.expenses)}</b><small>gastos</small></div></div></div>${legendHtml(r.byCategory, r.expenses)}` : emptyHtml('chart-pie', 'Sin gastos', '')}</div>
   </div>
@@ -597,15 +601,21 @@ async function renderReports(el) {
   $('#rFrom')?.addEventListener('change', setCustom);
   $('#rTo')?.addEventListener('change', setCustom);
   $('#rPdf').onclick = () => window.print();
+  $('#rMail')?.addEventListener('click', async () => {
+    try {
+      const x = await api('/summary/week/email', { method: 'POST', body: { date: from } });
+      toast(x.simulated ? 'El correo no está configurado en el servidor' : `Resumen enviado a ${me.email}`, !!x.simulated);
+    } catch (e) { toast(e.message, true); }
+  });
   $('#rCsv').onclick = () => download(`/export.csv?${qs({ from, to })}`, 'movimientos.csv').catch((e) => toast(e.message, true));
   $('#rXls').onclick = () => download(`/export.xlsx?${qs({ from, to })}`, 'agenda-gastos.xlsx').catch((e) => toast(e.message, true));
   chart($('#cRMonths'), {
     type: 'bar',
     data: {
-      labels: months.map((m) => cap(parse(m.month + '-01').toLocaleDateString('es-ES', { month: 'short', year: '2-digit' }).replace('.', ''))),
+      labels: daily ? daily.map((d) => (daily.length <= 7 ? cap(fmtDate(d.date, { weekday: 'short', day: 'numeric' })) : parse(d.date).getDate())) : months.map((m) => cap(parse(m.month + '-01').toLocaleDateString('es-ES', { month: 'short', year: '2-digit' }).replace('.', ''))),
       datasets: [
-        { label: 'Ingresos', data: months.map((m) => m.incomes), backgroundColor: cssVar('--success'), borderRadius: 6, maxBarThickness: 26 },
-        { label: 'Gastos', data: months.map((m) => m.expenses), backgroundColor: cssVar('--danger'), borderRadius: 6, maxBarThickness: 26 },
+        { label: 'Ingresos', data: (daily || months).map((m) => m.incomes), backgroundColor: cssVar('--success'), borderRadius: 6, maxBarThickness: 26 },
+        { label: 'Gastos', data: (daily || months).map((m) => m.expenses), backgroundColor: cssVar('--danger'), borderRadius: 6, maxBarThickness: 26 },
       ],
     },
     options: { ...barOpts, plugins: { ...barOpts.plugins, legend: { display: true, position: 'bottom', labels: { boxWidth: 12 } }, tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${eur(c.parsed.y)}` } } } },
@@ -617,17 +627,12 @@ async function renderReports(el) {
 const rState = { q: '', from: '', to: '', cat: '' };
 async function renderReceipts(el) {
   el.innerHTML = `
-  <div class="scan-hero card">
-    <div><h2>${ic('scan-line')}Escanea tus tickets</h2><p>Haz una foto y la app lee el establecimiento, la fecha, el importe y los productos. Revisas los datos y se guarda como gasto.</p></div>
-    <button class="btn primary lg" id="bigScan">${ic('camera', 'sm')}ESCANEAR TICKET</button>
-  </div>
   <div class="toolbar">
     <div class="input-icon grow">${ic('search')}<input type="search" id="rq" placeholder="Buscar establecimiento…" value="${esc(rState.q)}"></div>
     <input type="date" id="rf" value="${rState.from}" title="Desde"><input type="date" id="rt" value="${rState.to}" title="Hasta">
     <select id="rc"><option value="">Todas las categorías</option>${cats.map((c) => `<option value="${c.id}" ${rState.cat === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
   </div>
   <div id="rGrid"><div class="skeleton" style="height:220px"></div></div>`;
-  $('#bigScan').onclick = () => pickReceipt();
   let list = [];
   const load = async () => {
     list = await api('/receipts?' + qs({ q: rState.q, from: rState.from, to: rState.to, category: rState.cat }));
@@ -636,7 +641,7 @@ async function renderReceipts(el) {
         <span class="thumb">${r.hasImage ? `<img loading="lazy" src="/api/receipts/${r.id}/image" alt="">` : ic('receipt', 'lg')}</span>
         <span class="t-body"><b>${esc(r.expense?.name || r.merchant)}</b><small>${fmtDate(r.date, { day: 'numeric', month: 'short', year: 'numeric' })}</small>
         <span class="t-foot">${catTag(r.category)}<b>${eur(r.expense?.amount ?? r.total)}</b></span></span></button>`).join('')}</div>`
-      : emptyHtml('receipt', rState.q || rState.from || rState.to || rState.cat ? 'Sin resultados' : 'Aún no has escaneado tickets', 'Los tickets que escanees aparecerán aquí con su foto.');
+      : emptyHtml('receipt', rState.q || rState.from || rState.to || rState.cat ? 'Sin resultados' : 'Aún no has escaneado tickets', 'Pulsa «Escanear ticket»: haz una foto, revisa los datos y se guarda como gasto con su foto.', rState.q || rState.from || rState.to || rState.cat ? '' : `<button class="btn primary sm" data-act="scan">${ic('camera', 'sm')}Escanear ticket</button>`);
     hydrate($('#rGrid'));
   };
   $('#rGrid').onclick = (e) => { const b = e.target.closest('.ticket'); if (b) receiptDetail(list.find((r) => r.id === b.dataset.id)); };
