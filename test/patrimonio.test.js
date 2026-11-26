@@ -313,3 +313,29 @@ test('15. errores y conexiones incompletas', async () => {
   assert.ok(!/demo-session:/.test(raw), 'sesión cifrada en la base de datos');
   assert.ok(!JSON.stringify(await A('/banks/status')).includes('session'));
 });
+
+test('16. configuración de Enable Banking desde la app: solo administradores, validación y sin filtrar la clave', async () => {
+  // B no es administrador
+  await assert.rejects(B('/banks/setup'), (e) => e.status === 403);
+  await assert.rejects(B('/banks/setup', { method: 'POST', body: { appId: 'x', privateKey: 'y' } }), (e) => e.status === 403);
+  await assert.rejects(A('/banks/setup'), /verificación en dos pasos/);
+  const { db } = require('../server/db');
+  db.users.find((u) => u.email === 'ana@prueba.test').totp = 'simulado-para-la-prueba';
+  const s = await A('/banks/setup');
+  assert.equal(s.configured, false);
+  assert.match(s.redirectUrl, /\/banco-conectado$/);
+  assert.match(s.privacyUrl, /\/privacidad\.html$/);
+  // Validaciones sin llamar a Enable Banking
+  await assert.rejects(A('/banks/setup', { method: 'POST', body: { appId: 'no-es-un-id', privateKey: 'x' } }), /ID de la aplicación/);
+  await assert.rejects(A('/banks/setup', { method: 'POST', body: { appId: '1a2b3c4d-1111-2222-3333-444455556666', privateKey: 'esto no es una clave' } }), /clave privada/);
+  const st = await A('/banks/status');
+  assert.equal(st.canSetup, true);
+  assert.equal(st.realConfigured, false);
+  assert.equal((await B('/banks/status')).canSetup, false);
+  // Las páginas de privacidad y condiciones son públicas
+  for (const p of ['/privacidad.html', '/condiciones.html']) assert.equal((await fetch(base + p)).status, 200);
+  // Guardar los ajustes de administración no borra la marca de entorno
+  const before = (await A('/admin/settings')).environment;
+  await A('/admin/settings', { method: 'PUT', body: { banner: 'hola' } });
+  assert.equal((await A('/admin/settings')).environment, before);
+});

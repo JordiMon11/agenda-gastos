@@ -132,8 +132,8 @@ function bankCard(bank) {
   if (!bank.available) return `<div class="card"><div class="card-head"><h3>${ic('shield-check', 'sm')}Conexión con tu banco</h3><span class="badge">No activada</span></div>
     <p class="set-desc">${esc(bank.note || '')}</p>
     <p class="set-desc">Cuando se active, autorizarás la conexión en la web oficial de tu banco (Open Banking PSD2). Será solo de lectura: la app nunca verá tus claves ni podrá hacer pagos.</p>
-    <button class="btn sm" id="bkImport">${ic('upload', 'sm')}Importar un extracto</button></div>`;
-  return `<div class="card"><div class="card-head"><h3>${ic('shield-check', 'sm')}Bancos conectados</h3><button class="btn sm primary" id="bkConnect">${ic('plus', 'sm')}Conectar banco</button></div>
+    <div class="row" style="gap:8px;flex-wrap:wrap">${bank.canSetup ? `<button class="btn sm primary" id="bkSetup">${ic('key-round', 'sm')}Activar conexión con bancos</button>` : ''}<button class="btn sm" id="bkImport">${ic('upload', 'sm')}Importar un extracto</button></div></div>`;
+  return `<div class="card"><div class="card-head"><h3>${ic('shield-check', 'sm')}Bancos conectados</h3><div class="row" style="gap:6px">${bank.canSetup ? `<button class="icon-btn sm" id="bkSetup" title="Configuración de Enable Banking">${ic('settings', 'sm')}</button>` : ''}<button class="btn sm primary" id="bkConnect">${ic('plus', 'sm')}Conectar banco</button></div></div>
     <p class="set-desc">Solo lectura. Autorizas en la web oficial de tu banco: la app nunca ve tus claves ni puede hacer pagos. Se actualiza sola cada pocas horas.</p>
     <div class="list">${bank.connections.map((c) => `<div class="li bank-conn">
       <span class="ichip sm">${ic('landmark', 'sm')}</span>
@@ -152,6 +152,7 @@ function bankCard(bank) {
 function bindBank(el, bank) {
   $('#bkImport')?.addEventListener('click', () => openImport());
   $('#bkConnect')?.addEventListener('click', () => connectBank(bank));
+  $('#bkSetup')?.addEventListener('click', () => setupBank());
   el.addEventListener('click', async (ev) => {
     const b = ev.target.closest('[data-sync],[data-renew],[data-choose],[data-disc]');
     if (!b) return;
@@ -169,6 +170,82 @@ function bindBank(el, bank) {
       if (b.dataset.choose) chooseAccounts(c);
       if (b.dataset.disc) disconnectBank(c);
     } catch (e) { toast(e.message, true); b.disabled = false; }
+  });
+}
+// ---------- Activar la conexión real con bancos (Enable Banking): guiado y sin tocar el servidor ----------
+async function setupBank() {
+  let cfg;
+  try { cfg = await api('/banks/setup'); } catch (e) { return toast(e.message, true); }
+  const copyRow = (label, value) => `<div class="copy-row"><span>${label}</span><code>${esc(value)}</code><button type="button" class="icon-btn sm" data-copy="${esc(value)}" title="Copiar">${ic('copy', 'sm')}</button></div>`;
+  const fixed = (label, value) => `<div class="copy-row"><span>${label}</span><code>${value}</code></div>`;
+  const ck = cfg.check;
+  const good = ck && ck.active && ck.redirectOk;
+  const status = cfg.configured
+    ? `<div class="notice" style="margin-bottom:12px">${ic(good ? 'circle-check' : 'triangle-alert', 'sm')}<span>
+        <b>${good ? 'Funcionando' : 'Configurada, pero falta algo'}</b>${ck?.name ? ` · «${esc(ck.name)}»` : ''}${ck?.environment ? ` · ${ck.environment === 'PRODUCTION' ? 'Producción' : 'Sandbox (bancos de prueba)'}` : ''}
+        ${ck && !ck.active ? '<br>Aún no está activa: en Enable Banking pulsa <b>Activate by linking accounts</b> (paso 4).' : ''}
+        ${ck && !ck.redirectOk ? '<br>Falta la <b>Redirect URL</b> del paso 2 en Enable Banking.' : ''}
+        ${cfg.source === 'env' ? '<br>Configurada con variables de entorno en Render.' : ''}</span></div>`
+    : '';
+  const env = cfg.source === 'env';
+  openModal({
+    title: 'Conectar con tus bancos reales',
+    icon: 'landmark',
+    okText: env ? 'Comprobar' : cfg.configured ? 'Guardar y comprobar' : 'Activar',
+    html: `${status}
+      <p class="set-desc">Gratis para uso personal. Solo se hace una vez (unos 10 minutos).</p>
+      <ol class="steps bank-steps">
+        <li>Entra en <a href="https://enablebanking.com/sign-in/" target="_blank" rel="noopener">enablebanking.com</a>, escribe tu correo y abre el enlace que te llega.</li>
+        <li>Ve a <a href="https://enablebanking.com/cp/applications" target="_blank" rel="noopener">Applications</a> → <b>Add a new application</b> y rellena:
+          <div class="copy-list">
+            ${fixed('Environment', 'Production')}
+            ${fixed('Key', 'Generate in the browser')}
+            ${fixed('Name', 'Agenda de Gastos')}
+            ${copyRow('Redirect URL', cfg.redirectUrl)}
+            ${fixed('Description', 'Uso personal: ver mis cuentas')}
+            ${fixed('Email', 'tu correo')}
+            ${copyRow('Privacy policy', cfg.privacyUrl)}
+            ${copyRow('Terms of service', cfg.termsUrl)}
+          </div></li>
+        <li>Pulsa <b>Register</b>. Se descarga un archivo <b>.pem</b> (búscalo en Descargas).</li>
+        <li>En la lista de aplicaciones pulsa <b>Activate by linking accounts</b>, elige tu banco y autoriza en su web. Repite con cada banco que quieras usar.</li>
+        <li>${env ? 'Pulsa «Comprobar».' : 'Sube aquí el archivo .pem:'}</li>
+      </ol>
+      ${env ? '' : `<label class="field">Archivo .pem<input type="file" id="ebPem" accept=".pem,application/x-pem-file,text/plain"></label>
+      <label class="field">ID de la aplicación<input name="appId" id="ebAppId" value="${esc(cfg.appId || '')}" placeholder="Se rellena solo al elegir el archivo" autocomplete="off" spellcheck="false"></label>`}
+      <p class="set-desc">La clave se guarda cifrada y nadie puede verla después. Solo permite leer las cuentas que tú autorices: nunca hacer pagos.</p>
+      ${cfg.configured && !env ? '<button type="button" class="btn sm danger" id="ebRemove">Quitar configuración</button>' : ''}`,
+    onSubmit: async (d) => {
+      const file = $('#ebPem')?.files[0];
+      if (env || (cfg.configured && !file)) {
+        const r = await api('/banks/setup/check', { method: 'POST' });
+        if (!r.check.active) throw new Error('Enable Banking dice que la aplicación aún no está activa: pulsa «Activate by linking accounts» en su web.');
+        if (!r.check.redirectOk) throw new Error('Falta la Redirect URL en Enable Banking: ' + r.redirectUrl);
+        toast('Todo correcto: ya puedes conectar tus bancos');
+        return route();
+      }
+      if (!file) throw new Error('Sube el archivo .pem que se descargó al registrar la aplicación');
+      if (file.size > 20000) throw new Error('Ese archivo es demasiado grande para ser una clave .pem');
+      const r = await api('/banks/setup', { method: 'POST', body: { appId: d.appId, privateKey: await file.text() } });
+      const c = r.check || {};
+      if (!c.active) toast('Guardado. Falta activarla en Enable Banking: «Activate by linking accounts».', true);
+      else if (!c.redirectOk) toast('Guardado. Falta añadir la Redirect URL en Enable Banking.', true);
+      else toast('¡Listo! Ya puedes conectar tus bancos');
+      route();
+    },
+  });
+  $('#modalBody').onclick = async (ev) => {
+    const b = ev.target.closest('[data-copy]');
+    if (!b) return;
+    try { await navigator.clipboard.writeText(b.dataset.copy); toast('Copiado'); } catch { toast('No se ha podido copiar', true); }
+  };
+  $('#ebPem')?.addEventListener('change', (ev) => {
+    const m = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(ev.target.files[0]?.name || '');
+    if (m) $('#ebAppId').value = m[1];
+  });
+  $('#ebRemove')?.addEventListener('click', async () => {
+    if (!confirm('¿Quitar la configuración de Enable Banking? Las conexiones dejarán de actualizarse.')) return;
+    try { await api('/banks/setup', { method: 'DELETE' }); toast('Configuración quitada'); location.reload(); } catch (e) { toast(e.message, true); }
   });
 }
 async function connectBank(bank) {

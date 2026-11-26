@@ -194,6 +194,7 @@ router.put('/settings', h(async (req, res) => {
   const b = req.body || {};
   const before = JSON.stringify(db.settings);
   db.settings = {
+    ...db.settings, // conserva la marca de entorno y otros ajustes internos
     registrationOpen: b.registrationOpen === undefined ? db.settings.registrationOpen !== false : !!b.registrationOpen,
     banner: b.banner === undefined ? db.settings.banner || '' : String(b.banner).trim().slice(0, 300),
     bannerType: ['info', 'warn', 'ok'].includes(b.bannerType) ? b.bannerType : db.settings.bannerType || 'info',

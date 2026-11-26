@@ -1173,3 +1173,13 @@ dialog form { padding: 20px; }
   .stat.mini .value { font-size: 17px; }
   .stat.mini .ichip { display: none; }
 }
+
+/* Configuración guiada de Enable Banking */
+.bank-steps { margin: 10px 0 14px; }
+.bank-steps a { color: var(--primary); font-weight: 600; }
+.copy-list { display: grid; gap: 4px; margin: 8px 0 2px; }
+.copy-row { display: grid; grid-template-columns: 118px 1fr auto; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 8px; background: var(--surface-2, rgba(127,127,127,.08)); font-size: 13px; }
+.copy-row span { color: var(--text-3, var(--text-2)); }
+.copy-row code { font-size: 12.5px; color: var(--text); overflow-wrap: anywhere; }
+.copy-row .icon-btn { width: 28px; height: 28px; }
+@media (max-width: 520px) { .copy-row { grid-template-columns: 1fr auto; } .copy-row span { grid-column: 1 / -1; } }

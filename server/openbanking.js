@@ -20,7 +20,8 @@ const { db } = store;
 const D = require('./dates');
 const L = require('./ledger');
 const S = require('./security');
-const { HttpError } = require('./auth');
+const A = require('./auth');
+const { HttpError } = A;
 
 const of = (list, uid) => list.filter((x) => x.userId === uid);
 const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -36,24 +37,37 @@ class ProviderError extends Error {
 
 // ================= Enable Banking (proveedor real) =================
 const EB_API = 'https://api.enablebanking.com';
-const ebConfigured = () => !!(process.env.ENABLEBANKING_APP_ID && process.env.ENABLEBANKING_PRIVATE_KEY);
-function ebJwt() {
+// La configuración puede venir de variables de entorno (Render) o, más cómodo, de la propia app:
+// un administrador pega el ID de la aplicación y sube el archivo .pem en «Mi dinero» (se guarda cifrado).
+function ebConfig() {
+  if (process.env.ENABLEBANKING_APP_ID && process.env.ENABLEBANKING_PRIVATE_KEY) {
+    return { appId: process.env.ENABLEBANKING_APP_ID.trim(), key: process.env.ENABLEBANKING_PRIVATE_KEY.replace(/\\n/g, '\n'), source: 'env' };
+  }
+  const s = db.bankProvider;
+  if (s?.appId && s.keyEnc) {
+    try { return { appId: s.appId, key: S.decrypt(s.keyEnc), source: 'app' }; } catch { return null; }
+  }
+  return null;
+}
+const ebConfigured = () => !!ebConfig();
+function ebJwt(cfg = ebConfig()) {
   const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
   const iat = Math.floor(Date.now() / 1000);
-  const head = b64({ typ: 'JWT', alg: 'RS256', kid: process.env.ENABLEBANKING_APP_ID });
+  const head = b64({ typ: 'JWT', alg: 'RS256', kid: cfg.appId });
   const body = b64({ iss: 'enablebanking.com', aud: 'api.enablebanking.com', iat, exp: iat + 3600 });
-  const key = process.env.ENABLEBANKING_PRIVATE_KEY.replace(/\\n/g, '\n');
-  const sig = crypto.createSign('RSA-SHA256').update(`${head}.${body}`).sign(key).toString('base64url');
+  const sig = crypto.createSign('RSA-SHA256').update(`${head}.${body}`).sign(cfg.key).toString('base64url');
   return `${head}.${body}.${sig}`;
 }
-async function ebFetch(path, { method = 'GET', body } = {}) {
+async function ebFetch(path, { method = 'GET', body, cfg, setup = false } = {}) {
   let r;
   try {
-    r = await fetch(EB_API + path, { method, headers: { Authorization: `Bearer ${ebJwt()}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(30000) });
+    r = await fetch(EB_API + path, { method, headers: { Authorization: `Bearer ${ebJwt(cfg)}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(30000) });
   } catch (e) {
     throw new ProviderError('No se ha podido contactar con el servicio de conexión bancaria');
   }
   const data = await r.json().catch(() => ({}));
+  if (setup && (r.status === 401 || r.status === 403)) throw new ProviderError('Enable Banking no reconoce ese ID de aplicación con esa clave. Comprueba que el archivo .pem es el de esta aplicación.', { status: 400 });
+  if (r.status === 401 && !/session/i.test(path) && !path.startsWith('/accounts')) throw new ProviderError('Enable Banking no acepta las credenciales de la aplicación. Revísalas en Mi dinero → Conexión con tu banco.', { status: 502 });
   if (r.status === 401 || r.status === 403 || /EXPIRED|REVOKED|INVALID_SESSION|CLOSED_SESSION/i.test(data?.error || data?.code || '')) throw new ProviderError('El permiso con el banco ha caducado o se ha revocado', { expired: true, status: 409 });
   if (!r.ok) throw new ProviderError(`El banco no ha respondido bien (${r.status}${data?.message ? ': ' + String(data.message).slice(0, 120) : ''})`);
   return data;
@@ -286,8 +300,78 @@ router.get('/banks/status', (req, res) => {
     connections: of(db.bankConnections, req.user.id).map(connView),
     syncs: of(db.bankSyncs, req.user.id).slice(-20).reverse(),
     note: list.length ? null : 'La conexión directa con el banco no está activada en este servidor. Mientras tanto, importa el extracto que descargas de tu banca online.',
+    canSetup: A.isAdmin(req.user),
+    setupNeeds2fa: A.isAdmin(req.user) && !req.user.totp,
+    realConfigured: ebConfigured(),
   });
 });
+
+// ---------- Configuración de Enable Banking desde la app (solo administradores) ----------
+function publicBase(req) {
+  if (process.env.PUBLIC_URL) return process.env.PUBLIC_URL.replace(/\/+$/, '');
+  const host = req.get('host');
+  const local = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host);
+  return `${local ? req.protocol : 'https'}://${host}`;
+}
+const onlyAdmin = (req) => {
+  if (!A.isAdmin(req.user)) throw new HttpError(403, 'Solo un administrador puede configurar la conexión con bancos');
+  if (!req.user.totp) throw new HttpError(403, 'Activa la verificación en dos pasos (Ajustes → Seguridad) para configurar la conexión con bancos');
+};
+const auditSetup = (req, action) => db.adminLog?.push({ id: store.id(), at: nowIso(), ip: S.clientIp(req), adminId: req.user.id, adminEmail: req.user.email, targetId: null, targetEmail: null, action, detail: '' });
+async function ebCheck(cfg, req) {
+  const app = await ebFetch('/application', { cfg, setup: true });
+  const redirectUrl = `${publicBase(req)}/banco-conectado`;
+  return {
+    name: app.name || '', environment: app.environment || '', active: app.active !== false,
+    redirectOk: (app.redirect_urls || []).some((u) => String(u).replace(/\/+$/, '') === redirectUrl), redirectUrls: app.redirect_urls || [],
+    checkedAt: nowIso(),
+  };
+}
+function setupView(req) {
+  const cfg = ebConfig();
+  const base = publicBase(req);
+  return {
+    configured: !!cfg, source: cfg?.source || null, appId: cfg?.appId || '',
+    check: db.bankProvider?.check || null,
+    redirectUrl: `${base}/banco-conectado`, privacyUrl: `${base}/privacidad.html`, termsUrl: `${base}/condiciones.html`,
+  };
+}
+router.get('/banks/setup', (req, res) => { onlyAdmin(req); res.json(setupView(req)); });
+router.post('/banks/setup', h(async (req, res) => {
+  onlyAdmin(req);
+  if (ebConfig()?.source === 'env') throw new HttpError(400, 'Ya está configurada con variables de entorno en el servidor (Render).');
+  const appId = String(req.body?.appId || '').trim();
+  const pem = String(req.body?.privateKey || '').replace(/\r/g, '').trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(appId)) throw new HttpError(400, 'El ID de la aplicación no es válido (es un código como 1a2b3c4d-…; también es el nombre del archivo .pem)');
+  try {
+    const k = crypto.createPrivateKey(pem);
+    if (k.asymmetricKeyType !== 'rsa') throw new Error();
+  } catch { throw new HttpError(400, 'Ese archivo no es una clave privada válida. Sube el archivo .pem que descargaste al registrar la aplicación.'); }
+  if (!S.hasKey()) throw new HttpError(500, 'Falta APP_SECRET en el servidor: no se puede guardar la clave cifrada.');
+  const cfg = { appId, key: pem, source: 'app' };
+  let check;
+  try { check = await ebCheck(cfg, req); } catch (e) { throw new HttpError(e.status || 502, e.message); }
+  db.bankProvider = { appId, keyEnc: S.encrypt(pem), check, updatedAt: nowIso(), updatedBy: req.user.id };
+  auditSetup(req, 'Conexión con bancos configurada (Enable Banking)');
+  await store.save();
+  res.json(setupView(req));
+}));
+router.post('/banks/setup/check', h(async (req, res) => {
+  onlyAdmin(req);
+  const cfg = ebConfig();
+  if (!cfg) throw new HttpError(400, 'Todavía no está configurada');
+  let check;
+  try { check = await ebCheck(cfg, req); } catch (e) { throw new HttpError(e.status || 502, e.message); }
+  if (cfg.source === 'app') { db.bankProvider.check = check; await store.save(); }
+  res.json({ ...setupView(req), check });
+}));
+router.delete('/banks/setup', h(async (req, res) => {
+  onlyAdmin(req);
+  delete db.bankProvider;
+  auditSetup(req, 'Configuración de Enable Banking quitada');
+  await store.save();
+  res.json(setupView(req));
+}));
 router.get('/banks/list', h(async (req, res) => {
   const p = PROVIDERS[req.query.provider];
   if (!p || !p.available()) throw new HttpError(400, 'Proveedor no disponible');
@@ -297,7 +381,7 @@ async function startAuth(req, c, bank) {
   const p = PROVIDERS[c.provider];
   const state = S.randomToken ? S.randomToken(24) : crypto.randomBytes(24).toString('hex');
   pending.set(state, { userId: req.user.id, connectionId: c.id, exp: Date.now() + 30 * 60000 });
-  const base = process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
+  const base = publicBase(req);
   try {
     return (await p.start({ bank, state, redirectUrl: `${base}/banco-conectado`, days: 90, simulate: req.body?.simulate })).url;
   } catch (e) {
