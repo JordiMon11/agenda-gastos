@@ -263,8 +263,11 @@ function expenseForm(exp = {}, preset = {}) {
       ${exp.id ? `<div class="form-extra"><button type="button" class="btn sm" id="dupInModal">${ic('copy-plus', 'sm')}Duplicar</button><button type="button" class="btn danger sm" id="delInModal">${ic('trash-2', 'sm')}Eliminar gasto</button></div>` : ''}`,
     onSubmit: async (d) => {
       d.amount = Number(d.amount);
-      if (exp.id) await api('/expenses/' + exp.id, { method: 'PUT', body: d });
-      else await api('/expenses', { method: 'POST', body: d });
+      if (exp.id) {
+        const r = await api('/expenses/' + exp.id, { method: 'PUT', body: d });
+        // Has cambiado la categoría: ¿aplicarlo también a los próximos movimientos de ese comercio?
+        if (r.suggestRule) setTimeout(() => offerRule(r.suggestRule), 350);
+      } else await api('/expenses', { method: 'POST', body: d });
       toast(exp.id ? 'Gasto actualizado' : 'Gasto añadido');
       route();
       refreshNotifs();
@@ -1222,12 +1225,19 @@ function savingForm(s = {}) {
         <label class="field">Objetivo (opcional)<div class="input-money"><input name="goal" type="number" inputmode="decimal" step="0.01" min="0" value="${s.goal ?? ''}" placeholder="Sin objetivo"><span>€</span></div></label>
         ${s.id ? '' : `<label class="field">Ya tengo ahorrado<div class="input-money"><input name="initial" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0,00"><span>€</span></div></label>`}
       </div>
+      <label class="field">¿Dónde está este dinero?<select name="where">
+        ${accs.map((a) => `<option value="in:${a.id}" ${s.location !== 'separada' && (s.accountId === a.id || (!s.accountId && a.id === me.finance?.defaultAccountId)) ? 'selected' : ''}>Dentro de ${esc(a.name)} (apartado)</option>`).join('')}
+        <option value="separada" ${s.location === 'separada' || !accs.length ? 'selected' : ''}>Aparte de mis cuentas (efectivo, otra caja…)</option>
+      </select></label>
+      <p class="set-desc" style="margin-top:-6px">Si el dinero sigue en tu cuenta del banco, elige esa cuenta: se reserva de su saldo y no se suma dos veces.</p>
       <div class="mini-label">Color</div>
       <div class="color-picker" id="sColPick">${SAVING_COLORS.map((c) => `<button type="button" data-c="${c}" style="--c:${c}" aria-label="${c}"></button>`).join('')}</div>
       <div class="mini-label">Icono</div>
       <div class="icon-picker" id="sIcPick">${SAVING_ICONS.map((n) => `<button type="button" data-n="${n}" title="${n}">${ic(n)}</button>`).join('')}</div>`,
     onSubmit: async (d) => {
       if (d.goal === '' || Number(d.goal) === 0) d.goal = null;
+      if (d.where === 'separada') { d.location = 'separada'; d.accountId = null; } else { d.location = 'virtual'; d.accountId = String(d.where || '').slice(3) || null; }
+      delete d.where;
       if (s.id) await api('/savings/' + s.id, { method: 'PUT', body: d });
       else await api('/savings', { method: 'POST', body: d });
       toast('Hucha guardada');
@@ -1805,7 +1815,7 @@ function adminSettings(el, st) {
 // ---------- Aviso global ----------
 const bannerHtml = (txt, type) => `<div class="notice ${type === 'warn' ? 'warn' : type === 'ok' ? 'ok' : ''}">${ic(type === 'warn' ? 'triangle-alert' : type === 'ok' ? 'circle-check' : 'megaphone', 'sm')}<span>${esc(txt)}</span></div>`;
 function renderBanners() {
-  const env = publicCfg.environment === 'pruebas' ? bannerHtml('Entorno de PRUEBAS: los datos se borran en cada actualización. No uses datos reales.', 'warn') : '';
+  const env = publicCfg.environment === 'pruebas' ? bannerHtml(publicCfg.persistent ? 'Entorno de PRUEBAS: los datos se conservan, pero es una web para probar. No la uses como tu agenda real.' : 'Entorno de PRUEBAS: los datos se borran en cada actualización. No uses datos reales.', 'warn') : '';
   if (env) document.title = '[Pruebas] ' + document.title.replace(/^\[Pruebas\] /, '');
   const h = env + (publicCfg.banner ? bannerHtml(publicCfg.banner, publicCfg.bannerType) : '');
   $('#appBanner').innerHTML = h;
@@ -1874,13 +1884,13 @@ function forcePasswordChange() {
 // ---------- Secciones del menú (cada una con sus pestañas) ----------
 const GROUPS = {
   dashboard: { label: 'Inicio', icon: 'layout-dashboard', views: ['dashboard'] },
-  movimientos: { label: 'Movimientos', icon: 'receipt-text', views: ['gastos', 'ingresos', 'mensuales', 'tickets', 'importar'] },
+  movimientos: { label: 'Movimientos', icon: 'receipt-text', views: ['gastos', 'ingresos', 'mensuales', 'tickets', 'importar', 'revision'] },
   calendario: { label: 'Calendario', icon: 'calendar-days', views: ['calendario'] },
   dinero: { label: 'Mi dinero', icon: 'wallet', views: ['cuentas', 'ahorros'] },
   plan: { label: 'Planificación', icon: 'target', views: ['presupuestos', 'previsiones'] },
   asistente: { label: 'Asistente IA', icon: 'bot', views: ['asistente'] },
   informes: { label: 'Informes', icon: 'file-text', views: ['informes'] },
-  ajustes: { label: 'Ajustes', icon: 'settings', views: ['ajustes', 'seguridad', 'admin', 'descargar'] },
+  ajustes: { label: 'Ajustes', icon: 'settings', views: ['ajustes', 'clasificacion', 'seguridad', 'admin', 'descargar'] },
 };
 const groupOf = (v) => Object.keys(GROUPS).find((g) => GROUPS[g].views.includes(v)) || 'dashboard';
 
@@ -1907,8 +1917,10 @@ const VIEWS = {
   mensuales: ['Pagos fijos', () => 'Recibos, alquiler y suscripciones con aviso antes de cada cobro', renderRecurring, ['Nuevo pago fijo', () => recurringForm()]],
   tickets: ['Tickets', () => 'Escanea tickets y consulta su historial', (el) => renderReceipts(el), ['Escanear ticket', () => pickReceipt()]],
   importar: ['Importar', () => 'Sube el extracto de tu banco y se apuntan todos los movimientos de golpe', (el) => renderImport(el), ['Nuevo gasto', () => addExpense()]],
+  revision: ['Revisión', () => 'Lo que la app ha clasificado sola y lo que necesita tu confirmación', (el) => renderSmartReview(el)],
+  clasificacion: ['Clasificación', () => 'Reglas y diccionario de comercios de la clasificación automática', (el) => renderClassification(el)],
   calendario: ['Calendario', () => 'Gastos, ingresos y pagos previstos', renderCalendar],
-  cuentas: ['Cuentas', () => 'Tu dinero en cada cuenta, tarjeta y efectivo', (el) => renderAccounts(el), ['Nueva cuenta', () => accountForm()]],
+  cuentas: ['Patrimonio', () => 'Cuánto dinero tienes, dónde está y cuánto puedes usar', (el) => renderAccounts(el), ['Nueva cuenta', () => accountForm()]],
   ahorros: ['Ahorros', () => 'Cuánto tienes guardado y para qué', renderSavings, ['Nueva hucha', () => savingForm()]],
   presupuestos: ['Presupuestos', () => 'Cuánto puedes gastar y cómo vas este mes', (el) => renderBudgets(el), ['Nuevo presupuesto', () => budgetForm()]],
   previsiones: ['Previsiones', () => 'Cuánto tendrás y si puedes permitirte una compra', (el) => renderForecast(el)],
@@ -1919,7 +1931,7 @@ const VIEWS = {
   admin: ['Administración', () => 'Usuarios, contraseñas, permisos y ajustes de la app', renderAdmin],
   descargar: ['Descargar app', () => 'Úsala en el móvil y en el ordenador', renderDownload],
 };
-const TAB_ICON = { gastos: 'receipt-text', ingresos: 'hand-coins', mensuales: 'repeat', tickets: 'scan-line', importar: 'upload', cuentas: 'landmark', ahorros: 'piggy-bank', presupuestos: 'target', previsiones: 'chart-line', ajustes: 'settings', seguridad: 'shield-check', admin: 'user-cog', descargar: 'download' };
+const TAB_ICON = { gastos: 'receipt-text', ingresos: 'hand-coins', mensuales: 'repeat', tickets: 'scan-line', importar: 'upload', revision: 'check-check', clasificacion: 'tag', cuentas: 'landmark', ahorros: 'piggy-bank', presupuestos: 'target', previsiones: 'chart-line', ajustes: 'settings', seguridad: 'shield-check', admin: 'user-cog', descargar: 'download' };
 function renderSubnav(v) {
   const g = GROUPS[groupOf(v)];
   const tabs = g.views.filter((x) => (x !== 'admin' || me.isAdmin) && (x !== 'descargar' || !IS_ELECTRON));

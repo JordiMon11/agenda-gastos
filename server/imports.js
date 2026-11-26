@@ -85,20 +85,7 @@ function similar(a, b) {
 
 // ---------- Análisis: lee el archivo y prepara la tabla de revisión (no guarda nada) ----------
 function analyzeRows(user, account, parsed) {
-  const cats = of(db.categories, user.id);
-  const rules = new Map(of(db.importRules, user.id).map((r) => [r.key, r]));
-  // Lo que el usuario suele hacer con cada comercio (categoría más usada)
-  const histCount = new Map();
-  for (const e of of(db.expenses, user.id)) {
-    if (!e.categoryId) continue;
-    for (const k of new Set([C.keyOf(e.place || ''), C.keyOf(e.name)].filter(Boolean))) {
-      const m = histCount.get(k) || new Map();
-      m.set(e.categoryId, (m.get(e.categoryId) || 0) + 1);
-      histCount.set(k, m);
-    }
-  }
-  const history = new Map([...histCount].map(([k, m]) => [k, [...m].sort((a, b) => b[1] - a[1])[0][0]]));
-  const ctx = { cats, rules, history };
+  const ctx = require('./classifier').contextFor(user); // reglas, diccionario e historial del usuario
 
   const fps = fingerprints(user.id, account.id, parsed.rows);
   const known = knownFingerprints(user.id);
@@ -111,6 +98,7 @@ function analyzeRows(user, account, parsed) {
   }
   const accs = of(db.accounts, user.id).filter((a) => a.id !== account.id);
   const cashAcc = accs.find((a) => a.type === 'efectivo');
+  const creditAcc = accs.find((a) => a.type === 'credito');
   const recs = of(db.recurring, user.id).filter((r) => r.active);
   const expensesByKey = new Map();
   for (const e of of(db.expenses, user.id)) {
@@ -124,12 +112,17 @@ function analyzeRows(user, account, parsed) {
     const k = C.keyOf(r.description);
     (expensesByKey.get(k) || expensesByKey.set(k, []).get(k)).push({ fp: fps[i], date: r.date, amount: -r.amount, name: C.merchantOf(r.description) || r.description });
   });
+  const otherSide = [];
+  const accName = new Map(accs.map((a) => [a.id, a.name]));
+  for (const e of of(db.expenses, user.id)) if (accName.has(e.accountId)) otherSide.push({ name: e.name, date: e.date, amount: -e.amount, accountName: accName.get(e.accountId) });
+  for (const i of of(db.incomes, user.id)) if (accName.has(i.accountId)) otherSide.push({ name: i.name, date: i.date, amount: i.amount, accountName: accName.get(i.accountId) });
   const out = parsed.rows.map((r, i) => {
-    const cl = r.amount === null ? { merchant: C.merchantOf(r.description), key: C.keyOf(r.description), type: 'expense', categoryId: null, suggestedCategory: '', confidence: 0, reason: '' } : C.classify(r, ctx);
+    const cl = r.amount === null ? { merchant: C.merchantOf(r.description), key: C.keyOf(r.description), type: 'expense', categoryId: null, suggestedCategory: '', confidence: 0, reason: '', rule: '', review: 'pending' } : C.classify(r, ctx);
     const row = {
       i, fp: fps[i], line: r.line, date: r.date, valueDate: r.valueDate, description: r.description, merchant: cl.merchant, key: cl.key,
       amount: r.amount, currency: r.currency, ref: r.ref, bankId: r.bankId ? 'sí' : '', balance: r.balance,
       type: cl.type, categoryId: cl.categoryId, suggestedCategory: cl.suggestedCategory, incomeSource: cl.incomeSource || null,
+      subcategory: cl.subcategory || '', rule: cl.rule || '', source: cl.source || '', review: cl.review || 'pending', counterparty: cl.counterparty || '',
       confidence: cl.confidence, reason: cl.reason, status: 'new', notes: [], selected: true, counterpartId: null, dupOf: null, refundOf: null, recurringMatch: null,
       paymentMethod: C.paymentMethodOf(cl.type, r.description), error: r.error || '',
     };
@@ -138,12 +131,20 @@ function analyzeRows(user, account, parsed) {
 
     // Transferencias entre cuentas propias y efectivo: se propone la otra cuenta
     if (row.type === 'transfer') {
-      const U = St.norm(r.description);
-      const byName = accs.find((a) => St.norm(a.name).split(' ').some((w) => w.length > 3 && U.includes(w)));
-      const byType = /ahorro/.test(U) ? accs.find((a) => a.type === 'ahorro') : null;
-      row.counterpartId = (byName || byType)?.id || null;
+      // La cuenta cuyo nombre más coincide con la descripción (mejor si es del mismo banco y del tipo que se nombra)
+      const U = ` ${St.norm(r.description)} `;
+      let best = null, bestScore = 0;
+      for (const a of accs) {
+        let sc = St.norm(a.name).split(' ').filter((w) => w.length > 3 && U.includes(` ${w} `)).length * 2;
+        if (/ ahorro| hucha/.test(U) && a.type === 'ahorro') sc += 1;
+        if (sc && account.bankName && a.bankName === account.bankName) sc += 1;
+        if (sc > bestScore) { best = a; bestScore = sc; }
+      }
+      row.counterpartId = best?.id || null;
     }
     if (row.type === 'cash_withdrawal' || row.type === 'cash_deposit') row.counterpartId = cashAcc?.id || null;
+    // Pago de la tarjeta de crédito: es dinero que pasa a la tarjeta (las compras ya se apuntan al importar su extracto)
+    if (row.type === 'card_settlement') { row.counterpartId = creditAcc?.id || 'new:credito'; row.notes.push(creditAcc ? `Pago a «${creditAcc.name}»: no cuenta como gasto` : 'Se creará la cuenta «Tarjeta de crédito» para no contar dos veces las compras'); }
     // ¿Ya está ese traspaso registrado (por ejemplo, al importar la otra cuenta)?
     const cands = byAmount.get(Math.abs(r.amount).toFixed(2)) || [];
     const near = (m, days) => Math.abs(D.diffDays(D.parse(m.date), D.parse(r.date))) <= days && Math.sign(m.amount) === Math.sign(r.amount);
@@ -177,7 +178,13 @@ function analyzeRows(user, account, parsed) {
     if (ignored.has(row.fp)) { row.status = 'review'; row.selected = false; row.notes.push('La última vez decidiste no importarlo'); }
     else if (row.type === 'transfer' && !row.counterpartId) { row.status = 'review'; row.notes.push('Elige la otra cuenta si es un traspaso entre tus cuentas'); }
     else if (r.signGuessed) { row.status = 'review'; row.notes.push('Comprueba si es cargo o abono'); }
-    else if (r.amount < 0 && !row.categoryId && !row.suggestedCategory && !['transfer', 'cash_withdrawal'].includes(row.type)) row.status = 'review';
+    else if (r.amount < 0 && !row.categoryId && !row.suggestedCategory && !['transfer', 'cash_withdrawal', 'card_settlement'].includes(row.type)) row.status = 'review';
+    else if (row.review === 'review' && row.status === 'new') row.notes.push('Clasificación dudosa: revísala');
+    // ¿El mismo importe en sentido contrario en otra cuenta tuya? Puede ser un traspaso entre tus cuentas
+    if (['expense', 'transfer_out', 'income'].includes(row.type) && !row.dupOf) {
+      const other = otherSide.find((m) => Math.abs(Math.abs(m.amount) - Math.abs(r.amount)) < 0.001 && Math.sign(m.amount) === -Math.sign(r.amount) && Math.abs(D.diffDays(D.parse(m.date), D.parse(r.date))) <= 3);
+      if (other) row.notes.push(`Coincide con «${other.name}» en ${other.accountName}: si es un traspaso entre tus cuentas, únelos en Revisión`);
+    }
     return row;
   });
   return out;
@@ -223,7 +230,7 @@ router.post('/imports/analyze', express.json({ limit: JSON_LIMIT }), h(async (re
     db.importMappings.push({ id: store.id(), userId: req.user.id, signature: parsed.signature, bank: parsed.bank?.name || String(b.bankName || '').slice(0, 60), headers: parsed.headers, mapping, updatedAt: new Date().toISOString() });
     store.save();
   }
-  const base = { fileName, format: parsed.format, bank: parsed.bank, iban: parsed.iban, warnings: parsed.warnings, headers: parsed.headers, sample: parsed.sample, mapping: parsed.mapping, savedMapping: !!(parsed.signature && saved(parsed.signature)) };
+  const base = { fileName, format: parsed.format, bank: parsed.bank, statementBalance: parsed.balance || null, iban: parsed.iban, warnings: parsed.warnings, headers: parsed.headers, sample: parsed.sample, mapping: parsed.mapping, savedMapping: !!(parsed.signature && saved(parsed.signature)) };
   if (parsed.needsOcr) return res.json({ ...base, needsOcr: true, rows: [] });
   if (parsed.needsMapping) return res.json({ ...base, needsMapping: true, rows: [] });
   if (!parsed.rows.length) throw new HttpError(422, 'No se ha encontrado ningún movimiento en el archivo');
@@ -235,9 +242,10 @@ router.post('/imports/analyze', express.json({ limit: JSON_LIMIT }), h(async (re
 const recHash = (x) => sha(JSON.stringify([x.name ?? x.note ?? '', x.amount, x.date, x.categoryId ?? null, x.accountId ?? x.fromId ?? null, x.toId ?? null, x.notes ?? '', x.place ?? '']));
 const TYPE_KEYS = Object.keys(C.TYPES);
 
-router.post('/imports/commit', express.json({ limit: JSON_LIMIT }), h(async (req, res) => {
-  const user = req.user;
-  const b = req.body || {};
+// Importa los movimientos elegidos (lo usan la pantalla de importación y la sincronización con el banco)
+async function commitImport(user, b) {
+
+
   const account = myAccount(user, b.accountId);
   const list = Array.isArray(b.rows) ? b.rows : [];
   if (!list.length) throw new HttpError(400, 'No hay movimientos seleccionados');
@@ -247,7 +255,18 @@ router.post('/imports/commit', express.json({ limit: JSON_LIMIT }), h(async (req
   const known = knownFingerprints(user.id);
   const importId = store.id();
   const now = new Date().toISOString();
-  const created = { expenses: [], incomes: [], transfers: [], categories: [] };
+  const created = { expenses: [], incomes: [], transfers: [], categories: [], accounts: [] };
+  // Cuenta de la tarjeta de crédito (si hay pagos de tarjeta y no existe, se crea una)
+  let creditId = of(db.accounts, user.id).find((a) => a.type === 'credito')?.id || null;
+  const creditFor = () => {
+    if (creditId) return creditId;
+    const firstDate = list.map((r) => r?.date).filter(D.isYmd).sort()[0] || D.ymd(D.today());
+    const a = { id: store.id(), userId: user.id, name: 'Tarjeta de crédito', type: 'credito', initialBalance: 0, balanceDate: D.ymd(D.addDays(D.parse(firstDate), -1)), color: '#7c3aed', createdAt: now, createdByImport: importId };
+    created.accounts.push(a);
+    accIds.add(a.id);
+    creditId = a.id;
+    return a.id;
+  };
   const items = [];
   const linked = [];
   const paidMarks = [];
@@ -300,8 +319,13 @@ router.post('/imports/commit', express.json({ limit: JSON_LIMIT }), h(async (req
       continue;
     }
 
+    if (type === 'card_settlement' && r.counterpartId === 'new:credito') r.counterpartId = creditFor();
     const counterpart = r.counterpartId && accIds.has(r.counterpartId) && r.counterpartId !== account.id ? r.counterpartId : null;
-    if (['transfer', 'cash_withdrawal', 'cash_deposit'].includes(type) && counterpart) {
+    // Clasificación que se guarda con el movimiento (si lo has cambiado al revisar, queda confirmado)
+    const edited = !!r.learn || !!r.edited;
+    const review = edited ? 'confirmed' : ['auto', 'review', 'pending', 'confirmed'].includes(r.review) ? r.review : 'pending';
+    const cls = { merchant, subcategory: String(r.subcategory || '').slice(0, 40), rule: edited ? 'Elegida por ti al importar' : String(r.rule || '').slice(0, 120), source: edited ? 'manual' : String(r.source || '').slice(0, 20), confidence: edited ? 1 : Math.max(0, Math.min(1, Number(r.confidence) || 0)) };
+    if (['transfer', 'cash_withdrawal', 'cash_deposit', 'card_settlement'].includes(type) && counterpart) {
       const t = { id: store.id(), userId: user.id, type: 'transfer', fromId: amount < 0 ? account.id : counterpart, toId: amount < 0 ? counterpart : account.id, amount: round(Math.abs(amount)), date, note: description.slice(0, 200), ...base };
       created.transfers.push(t);
       items.push({ kind: 'transfer', id: t.id, hash: recHash(t) });
@@ -309,7 +333,8 @@ router.post('/imports/commit', express.json({ limit: JSON_LIMIT }), h(async (req
       continue;
     }
     if (amount > 0 && type !== 'refund') {
-      const inc = { id: store.id(), userId: user.id, name: (merchant || description).slice(0, 100), amount: round(amount), date, source: r.incomeSource === 'nomina' ? 'nomina' : type === 'cash_deposit' ? 'otros' : 'otros', notes: description, accountId: account.id, movementType: type, ...base };
+      const SRC = ['nomina', 'freelance', 'ventas', 'inversiones', 'alquiler', 'regalos', 'devoluciones', 'otros'];
+      const inc = { id: store.id(), userId: user.id, name: (merchant || String(r.counterparty || '') || description).slice(0, 100), amount: round(amount), date, source: SRC.includes(r.incomeSource) ? r.incomeSource : 'otros', notes: description, accountId: account.id, movementType: type, counterparty: String(r.counterparty || '').slice(0, 60), cls, review: review === 'pending' ? 'review' : review, ...base };
       created.incomes.push(inc);
       items.push({ kind: 'income', id: inc.id, hash: recHash(inc) });
       incomeTotal += amount;
@@ -318,8 +343,10 @@ router.post('/imports/commit', express.json({ limit: JSON_LIMIT }), h(async (req
     const e = {
       id: store.id(), userId: user.id, name: (merchant || description).slice(0, 100), amount: round(type === 'refund' ? -Math.abs(amount) : Math.abs(amount)),
       categoryId: categoryFor(r.categoryId), date, place: merchant, notes: description, accountId: account.id,
-      paymentMethod: L.PAYMENT_METHODS[r.paymentMethod] ? r.paymentMethod : C.paymentMethodOf(type, description), tags: [], movementType: type, ...base,
+      paymentMethod: L.PAYMENT_METHODS[r.paymentMethod] ? r.paymentMethod : C.paymentMethodOf(type, description), tags: [], movementType: type, cls, review, ...base,
     };
+    if (!e.categoryId && review === 'auto') e.review = 'pending';
+    if (type === 'transfer_out' && r.counterparty) e.counterparty = String(r.counterparty).slice(0, 60);
     if (type === 'refund') {
       e.refund = true;
       const orig = r.refundOf?.id && db.expenses.find((x) => x.id === r.refundOf.id && x.userId === user.id);
@@ -352,36 +379,52 @@ router.post('/imports/commit', express.json({ limit: JSON_LIMIT }), h(async (req
     const key = St.norm(r.key).slice(0, 60);
     if (!key) continue;
     const categoryId = typeof r.categoryId === 'string' && r.categoryId.startsWith('new:') ? catByName.get(St.norm(r.categoryId.slice(4)))?.id : (cats.some((c) => c.id === r.categoryId) ? r.categoryId : null);
-    learned.push({ key, categoryId: categoryId || null, type: TYPE_KEYS.includes(r.type) ? r.type : null });
+    learned.push({ key, match: 'merchant', pattern: key, categoryId: categoryId || null, type: TYPE_KEYS.includes(r.type) ? r.type : null });
   }
 
   const imported = created.expenses.length + created.incomes.length + created.transfers.length;
+
+  // Saldo real según el banco: el último saldo del extracto (o el que trae el OFX/CAMT) pasa a ser la referencia de la cuenta
+  let bankBalance = null;
+  const withBal = list.filter((r) => D.isYmd(r?.date) && Number.isFinite(Number(r.balance)) && r.balance !== null && r.balance !== '');
+  if (withBal.length) {
+    const asc = withBal[0].date <= withBal[withBal.length - 1].date;
+    const last = asc ? withBal[withBal.length - 1] : withBal[0];
+    bankBalance = { booked: round(Number(last.balance)), available: null, at: last.date };
+  }
+  const sb = b.statementBalance;
+  if (sb && D.isYmd(sb.at) && Number.isFinite(Number(sb.booked))) bankBalance = { booked: round(Number(sb.booked)), available: Number.isFinite(Number(sb.available)) && sb.available !== null ? round(Number(sb.available)) : null, at: sb.at };
+  const prevBank = account.bank ? { ...account.bank } : null;
   const record = {
     id: importId, userId: user.id, fileName: String(b.fileName || 'extracto').slice(0, 120), format: String(b.format || '').slice(0, 20),
     bank: String(b.bank || '').slice(0, 60), accountId: account.id, accountName: account.name, createdAt: now, by: user.name || user.email,
+    connectionId: b.connectionId || null, origin: b.connectionId ? 'banco conectado' : 'archivo',
     detected: Math.max(Number(b.detected) || 0, list.length), imported, duplicatesSkipped: dupSkipped, excluded, errors: errors.length, errorList: errors.slice(0, 50),
     incomeTotal: round(incomeTotal), expenseTotal: round(expenseTotal), transfers: transfersCount, status: imported || linked.length ? 'completada' : 'sin cambios',
     items, ignored: ignored.slice(0, 5000), events: [{ at: now, action: 'Importación', detail: `${imported} movimientos importados`, by: user.name || user.email }],
   };
 
   // Guardado «todo o nada»: si algo falla, se deshace en memoria y no queda nada a medias
-  const snapshot = { expenses: db.expenses.length, incomes: db.incomes.length, transfers: db.transfers.length, categories: db.categories.length, imports: db.imports.length, rules: structuredClone(of(db.importRules, user.id)) };
+  const snapshot = { accounts: db.accounts.length, expenses: db.expenses.length, incomes: db.incomes.length, transfers: db.transfers.length, categories: db.categories.length, imports: db.imports.length, rules: structuredClone(of(db.importRules, user.id)) };
   const paidBackup = paidMarks.map(({ rec }) => ({ rec, paid: [...(rec.paid || [])], lastPaidMonth: rec.lastPaidMonth }));
   try {
     db.categories.push(...created.categories);
+    db.accounts.push(...created.accounts);
+    if (bankBalance && (!account.bank?.at || bankBalance.at >= account.bank.at)) account.bank = { ...bankBalance, source: 'extracto', updatedAt: now };
     db.expenses.push(...created.expenses);
     db.incomes.push(...created.incomes);
     db.transfers.push(...created.transfers);
     for (const { ex, fp } of linked) ex.fingerprint = fp;
     for (const { rec, due } of paidMarks) R.markPaid(rec, D.parse(due));
     for (const l of learned) {
-      const ex = db.importRules.find((x) => x.userId === user.id && x.key === l.key);
-      if (ex) Object.assign(ex, { categoryId: l.categoryId, type: l.type, updatedAt: now });
+      const ex = db.importRules.find((x) => x.userId === user.id && (x.match || 'merchant') === 'merchant' && (x.pattern || x.key) === l.key);
+      if (ex) Object.assign(ex, { categoryId: l.categoryId, type: l.type, pattern: l.key, match: 'merchant', updatedAt: now });
       else db.importRules.push({ id: store.id(), userId: user.id, ...l, createdAt: now, updatedAt: now });
     }
     db.imports.push(record);
     await store.save();
   } catch (e) {
+    db.accounts.length = snapshot.accounts; account.bank = prevBank || undefined;
     db.expenses.length = snapshot.expenses; db.incomes.length = snapshot.incomes; db.transfers.length = snapshot.transfers;
     db.categories.length = snapshot.categories; db.imports.length = snapshot.imports;
     db.importRules = [...db.importRules.filter((x) => x.userId !== user.id), ...snapshot.rules];
@@ -391,12 +434,14 @@ router.post('/imports/commit', express.json({ limit: JSON_LIMIT }), h(async (req
     throw new HttpError(500, 'No se ha podido completar la importación. No se ha guardado ningún movimiento.');
   }
 
-  res.json({
+  return {
     id: importId, imported, incomes: created.incomes.length, expenses: created.expenses.length, transfers: transfersCount,
     incomeTotal: record.incomeTotal, expenseTotal: record.expenseTotal, duplicatesSkipped: dupSkipped, excluded, errors, linked: linked.length,
-    newCategories: created.categories.map((c) => c.name), rulesLearned: learned.length, recurringSuggestions: recurringSuggestions(user, created.expenses),
-  });
-}));
+    newCategories: created.categories.map((c) => c.name), newAccounts: created.accounts.map((a) => a.name), bankBalance, rulesLearned: learned.length, recurringSuggestions: recurringSuggestions(user, created.expenses),
+    importId, connectionId: b.connectionId || null,
+  };
+}
+router.post('/imports/commit', express.json({ limit: JSON_LIMIT }), h(async (req, res) => res.json(await commitImport(req.user, { ...(req.body || {}), connectionId: undefined }))));
 
 // Pagos que se repiten cada mes entre lo importado y tu historial → se proponen como pagos fijos
 function recurringSuggestions(user, fresh) {
@@ -508,4 +553,4 @@ router.delete('/imports-rules/:id', h(async (req, res) => {
   res.json({ ok: true });
 }));
 
-module.exports = { router, analyzeRows, fingerprints, MAX_MB, JSON_LIMIT };
+module.exports = { router, analyzeRows, commitImport, fingerprints, MAX_MB, JSON_LIMIT, COLL: { expense: 'expenses', income: 'incomes', transfer: 'transfers' } };

@@ -19,7 +19,7 @@ const UI = [
   'arrow-left-right', 'wallet-cards', 'file-text', 'check-check', 'bell-off', 'rocket', 'flask-conical', 'printer', 'receipt', 'credit-card',
   'hand-coins', 'lightbulb', 'copy-plus', 'list-filter',
   'scan-line', 'camera', 'image',
-  'upload', 'file-up', 'link', 'undo-2', 'file-search', 'table', 'funnel',
+  'upload', 'file-up', 'link', 'undo-2', 'file-search', 'table', 'funnel', 'refresh-cw', 'unlink',
   'users', 'user-plus', 'user-x', 'user-check', 'user-cog', 'crown', 'ban', 'megaphone', 'rotate-ccw', 'mail-check', 'lock-open', 'database', 'server', 'clipboard-list', 'user-pen',
 ];
 // Iconos disponibles para las categorías

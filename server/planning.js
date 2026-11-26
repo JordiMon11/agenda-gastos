@@ -43,9 +43,45 @@ function cleanAccount(b) {
     balanceDate: D.isYmd(b.balanceDate) ? b.balanceDate : D.ymd(D.today()),
     color: COLOR_RE.test(b.color || '') ? b.color : '#1e3a8a',
     currency: 'EUR',
+    bankName: String(b.bankName || '').trim().slice(0, 40),
+    iban: maskIban(b.iban),
   };
 }
+// Solo se guardan los 4 primeros y los 4 últimos caracteres del IBAN
+function maskIban(v) {
+  const s = String(v || '').replace(/[\s-]/g, '').toUpperCase();
+  if (/^[A-Z]{2}\d{2} •••• [A-Z0-9]{4}$/.test(String(v || ''))) return String(v);
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{8,30}$/.test(s)) return '';
+  return `${s.slice(0, 4)} •••• ${s.slice(-4)}`;
+}
 router.get('/accounts', (req, res) => res.json(L.accountBalances(req.user)));
+// Patrimonio: cuánto tienes, dónde y cuánto puedes usar (sin contar dos veces las huchas)
+router.get('/wealth', (req, res) => {
+  const accounts = L.accountBalances(req.user);
+  const w = L.wealth(req.user, accounts);
+  const m = L.moneySummary(req.user);
+  // Evolución del patrimonio: últimos 6 meses (fin de cada mes) y hoy
+  const t = D.today();
+  const points = [];
+  for (let i = 5; i >= 1; i--) { const d = new Date(t.getFullYear(), t.getMonth() - i + 1, 0); points.push({ date: D.ymd(d), total: L.balanceAt(req.user, D.ymd(d)) }); }
+  points.push({ date: D.ymd(t), total: L.balanceAt(req.user, D.ymd(t)) });
+  const conns = (db.bankConnections || []).filter((c) => c.userId === req.user.id);
+  res.json({ ...w, availableToSpend: m.available, reservedBills: m.reservedBills, reservedGoal: m.reservedSavings, evolution: points, connections: conns.length });
+});
+// Saldo real: el que te dice el banco (contable y, si lo sabes, disponible). Pasa a ser la referencia de la cuenta.
+router.post('/accounts/:id/bank-balance', h(async (req, res) => {
+  const a = findMine(db.accounts, req);
+  const booked = Number(req.body?.booked);
+  if (!Number.isFinite(booked) || Math.abs(booked) > 1e9) throw new HttpError(400, 'Indica el saldo que te muestra el banco');
+  const at = D.isYmd(req.body?.at) ? req.body.at : D.ymd(D.today());
+  if (at > D.ymd(D.today())) throw new HttpError(400, 'La fecha no puede ser futura');
+  if (at < a.balanceDate) throw new HttpError(400, 'La fecha es anterior al saldo inicial de la cuenta');
+  const avail = req.body?.available === '' || req.body?.available == null ? null : Number(req.body.available);
+  if (avail !== null && !Number.isFinite(avail)) throw new HttpError(400, 'Saldo disponible no válido');
+  a.bank = { booked: round(booked), available: avail === null ? null : round(avail), at, source: 'manual', updatedAt: new Date().toISOString() };
+  store.save();
+  res.json(L.accountBalances(req.user).find((x) => x.id === a.id));
+}));
 router.post('/accounts', h(async (req, res) => {
   const a = { id: store.id(), userId: req.user.id, ...cleanAccount(req.body), createdAt: new Date().toISOString() };
   db.accounts.push(a);

@@ -14,8 +14,12 @@ const ACCOUNT_TYPES = {
   efectivo: { label: 'Efectivo', icon: 'banknote' },
   credito: { label: 'Tarjeta de crédito', icon: 'credit-card' },
   debito: { label: 'Tarjeta de débito', icon: 'wallet-cards' },
+  deposito: { label: 'Depósito', icon: 'lock' },
   otra: { label: 'Otra', icon: 'wallet' },
 };
+// Grupos para el patrimonio: dinero para gastar, ahorro, efectivo y deudas
+const GROUP = { corriente: 'corriente', debito: 'corriente', otra: 'corriente', ahorro: 'ahorro', deposito: 'ahorro', efectivo: 'efectivo', credito: 'credito' };
+const SPENDABLE = new Set(['corriente', 'efectivo']);
 const PAYMENT_METHODS = { tarjeta: 'Tarjeta', efectivo: 'Efectivo', bizum: 'Bizum', transferencia: 'Transferencia', domiciliacion: 'Domiciliación', otro: 'Otro' };
 
 function financeOf(user) {
@@ -59,15 +63,40 @@ function movements(user) {
 // El saldo inicial es el que había en balanceDate: solo cuentan los movimientos posteriores
 const counts = (m, a) => m.always || m.date > a.balanceDate || (m.date === a.balanceDate && m.createdAt > (a.createdAt || ''));
 
+// Referencia del saldo: el último saldo comunicado por el banco (extracto, conexión o tú a mano) si es posterior
+// al saldo inicial. El saldo de hoy = esa referencia + los movimientos de después (eso último es estimado).
+const bankAnchor = (a) => (a.bank && D.isYmd(a.bank.at) && Number.isFinite(a.bank.booked) && a.bank.at >= a.balanceDate ? a.bank : null);
+const STALE_DAYS = 3;
 function accountBalances(user, moves = movements(user)) {
+  const t = D.ymd(D.today());
   return of(db.accounts, user.id).map((a) => {
     const mine = moves.filter((m) => m.accountId === a.id);
     const counted = mine.filter((m) => counts(m, a));
     const mk = D.monthKey(D.today());
+    const bank = bankAnchor(a);
+    const fromInitial = round(a.initialBalance + sum(counted));
+    let balance = fromInitial, after = [], reconcile = null;
+    if (bank) {
+      after = mine.filter((m) => m.date > bank.at);
+      balance = round(bank.booked + sum(after));
+      // Diferencia entre lo que calcula la app con tus movimientos y lo que dice el banco en esa fecha
+      const estimateAtBank = round(a.initialBalance + sum(counted.filter((m) => m.date <= bank.at)));
+      reconcile = round(bank.booked - estimateAtBank);
+    }
+    const daysOld = bank ? D.diffDays(D.parse(bank.at), D.parse(t)) : null;
     return {
       ...a,
       typeLabel: (ACCOUNT_TYPES[a.type] || ACCOUNT_TYPES.otra).label,
-      balance: round(a.initialBalance + sum(counted)),
+      group: GROUP[a.type] || 'corriente',
+      balance,
+      // Tipos de saldo: contable y disponible (del banco), retenido (la diferencia), estimado (calculado por la app)
+      balances: bank
+        ? { booked: bank.booked, available: bank.available ?? null, pending: bank.available != null ? round(bank.booked - bank.available) : null, estimated: balance, at: bank.at, source: bank.source || 'manual', updatedAt: bank.updatedAt || null }
+        : { booked: null, available: null, pending: null, estimated: balance, at: null, source: 'calculado', updatedAt: null },
+      confirmed: !!bank && after.length === 0 && daysOld <= STALE_DAYS,
+      stale: a.type !== 'efectivo' && (!bank || daysOld > STALE_DAYS), // el efectivo solo lo sabes tú: no hay banco que lo confirme
+      daysOld,
+      reconcile: reconcile && Math.abs(reconcile) >= 0.01 ? reconcile : 0,
       monthIn: sum(counted.filter((m) => m.date.startsWith(mk) && m.amount > 0 && m.kind !== 'transfer')),
       monthOut: -sum(counted.filter((m) => m.date.startsWith(mk) && m.amount < 0 && m.kind !== 'transfer')),
       movements: counted.length,
@@ -79,6 +108,11 @@ function balanceAt(user, dateStr, moves = movements(user)) {
   let total = 0;
   for (const a of of(db.accounts, user.id)) {
     const mine = moves.filter((m) => m.accountId === a.id);
+    const bank = bankAnchor(a);
+    if (bank) {
+      total += dateStr >= bank.at ? bank.booked + sum(mine.filter((m) => m.date > bank.at && m.date <= dateStr)) : bank.booked - sum(mine.filter((m) => m.date > dateStr && m.date <= bank.at));
+      continue;
+    }
     if (dateStr >= a.balanceDate) total += a.initialBalance + sum(mine.filter((m) => counts(m, a) && m.date <= dateStr));
     else total += a.initialBalance - sum(mine.filter((m) => !m.always && m.date > dateStr && m.date <= a.balanceDate && !counts(m, a)));
   }
@@ -147,12 +181,18 @@ function moneySummary(user) {
   const savedMonth = sum(of(db.savingMoves, user.id).filter((m) => m.date.startsWith(mk)), (m) => (m.type === 'in' ? m.amount : -m.amount));
   const reservedSavings = fin.savingsGoal ? Math.max(0, round(fin.savingsGoal - savedMonth)) : 0;
   const savings = sum(of(db.savingMoves, user.id), (m) => (m.type === 'in' ? m.amount : -m.amount));
-  const available = round(balance - reservedBills - reservedSavings);
+  const w = wealth(user, accounts);
+  const available = round(w.spendable - reservedBills - reservedSavings);
   const daysLeft = D.diffDays(t, eom) + 1;
   const general = budgetStatus(user).find((b) => !b.categoryId) || null;
   return {
     hasAccounts: accounts.length > 0,
     balance,
+    spendable: w.spendable,
+    netWorth: w.total,
+    inSavingsAccounts: w.byGroup.ahorro,
+    inPiggyBanks: w.piggyTotal,
+    stale: accounts.filter((a) => a.stale).map((a) => a.name),
     reservedBills,
     reservedSavings,
     available,
@@ -167,7 +207,47 @@ function moneySummary(user) {
   };
 }
 
+// ---------- Patrimonio: cuánto dinero tienes, dónde y cuánto puedes usar ----------
+// Huchas: si están dentro de una cuenta (virtuales) son dinero reservado de esa cuenta y NO se suman otra vez;
+// si están aparte, se suman al patrimonio. Las que no dicen dónde están se tratan como dentro de la cuenta principal
+// (así nunca se cuenta dos veces el mismo dinero).
+function piggyBanks(user) {
+  const def = defaultAccount(user)?.id || null;
+  return of(db.savings, user.id).map((s) => {
+    const balance = sum(of(db.savingMoves, user.id).filter((m) => m.savingId === s.id), (m) => (m.type === 'in' ? m.amount : -m.amount));
+    const location = s.location === 'separada' ? 'separada' : 'virtual';
+    const accountId = location === 'virtual' ? (db.accounts.some((a) => a.id === s.accountId && a.userId === user.id) ? s.accountId : def) : null;
+    return { id: s.id, name: s.name, goal: s.goal, color: s.color, icon: s.icon, balance, location, accountId, assigned: location === 'separada' || !!s.accountId };
+  });
+}
+function wealth(user, accounts = accountBalances(user)) {
+  const piggies = piggyBanks(user);
+  const byGroup = { corriente: 0, ahorro: 0, efectivo: 0, credito: 0 };
+  for (const a of accounts) byGroup[a.group] = round(byGroup[a.group] + a.balance);
+  const virtualIn = (id) => sum(piggies.filter((p) => p.location === 'virtual' && p.accountId === id), (p) => p.balance);
+  const separate = sum(piggies.filter((p) => p.location === 'separada'), (p) => p.balance);
+  const piggyTotal = sum(piggies, (p) => p.balance);
+  const debt = round(Math.min(0, byGroup.credito));
+  const total = round(byGroup.corriente + byGroup.ahorro + byGroup.efectivo + debt + separate);
+  const spendableAccounts = accounts.filter((a) => SPENDABLE.has(a.group));
+  const spendable = round(sum(spendableAccounts, (a) => a.balance) - sum(spendableAccounts, (a) => virtualIn(a.id)));
+  const items = accounts.map((a) => {
+    const reserved = virtualIn(a.id);
+    return { id: a.id, name: a.name, type: a.type, typeLabel: a.typeLabel, group: a.group, bankName: a.bankName || '', iban: a.iban || '', color: a.color, balance: a.balance, reserved, free: round(a.balance - reserved), share: total > 0 && a.group !== 'credito' ? Math.round((a.balance / total) * 1000) / 10 : 0, balances: a.balances, stale: a.stale, confirmed: a.confirmed, daysOld: a.daysOld, reconcile: a.reconcile, connectionId: a.connectionId || null };
+  });
+  return {
+    total, // patrimonio financiero sin duplicar
+    spendable, // cuentas para gastar y efectivo, sin lo apartado en huchas
+    reservedForSavings: round(byGroup.ahorro + piggyTotal),
+    byGroup, debt, piggyTotal, separatePiggies: separate,
+    piggies, accounts: items,
+    unassignedPiggies: piggies.filter((p) => !p.assigned && p.balance > 0).map((p) => p.name),
+    stale: accounts.filter((a) => a.stale).map((a) => ({ id: a.id, name: a.name, daysOld: a.daysOld })),
+  };
+}
+
 module.exports = {
+  wealth, piggyBanks, GROUP, SPENDABLE, bankAnchor,
   ACCOUNT_TYPES, PAYMENT_METHODS, round, sum, of, financeOf, defaultAccount, movements, accountBalances, balanceAt,
   pendingBills, budgetStatus, budgetLevel, moneySummary,
 };

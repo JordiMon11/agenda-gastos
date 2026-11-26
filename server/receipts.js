@@ -175,6 +175,7 @@ router.post('/receipts', h(async (req, res) => {
     createdAt: new Date().toISOString(),
   };
   e.receiptId = receipt.id;
+  require('./classifier').onExpenseCreated(req.user, e, { userCategory: !!e.categoryId });
   db.expenses.push(e);
   db.receipts.push(receipt);
   store.save();

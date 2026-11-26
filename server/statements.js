@@ -544,7 +544,12 @@ function ofxRows(text) {
       error: !date ? 'Fecha no válida' : amount === null ? 'Importe no válido' : '',
     });
   }
-  return { rows, entity: tag(text, 'BANKID').slice(0, 4), iban: tag(text, 'ACCTID'), currency: tag(text, 'CURDEF') || 'EUR', org: tag(text, 'ORG') };
+  // Saldos que comunica el banco en el propio archivo
+  const ledger = /<LEDGERBAL>([\s\S]*?)(?:<\/LEDGERBAL>|<AVAILBAL>|<\/STMTRS>)/i.exec(text)?.[1] || '';
+  const avail = /<AVAILBAL>([\s\S]*?)(?:<\/AVAILBAL>|<\/STMTRS>)/i.exec(text)?.[1] || '';
+  const booked = ledger ? parseAmount(tag(ledger, 'BALAMT'), '.') : null;
+  const balance = booked !== null ? { booked, available: avail ? parseAmount(tag(avail, 'BALAMT'), '.') : null, at: parseDate(tag(ledger, 'DTASOF').slice(0, 8)) } : null;
+  return { rows, entity: tag(text, 'BANKID').slice(0, 4), iban: tag(text, 'ACCTID'), currency: tag(text, 'CURDEF') || 'EUR', org: tag(text, 'ORG'), balance: balance?.at ? balance : null };
 }
 
 // ---------- CAMT.053 (ISO 20022) ----------
@@ -580,7 +585,20 @@ function camtRows(text) {
     });
   }
   const iban = first(text, ['Acct', 'Id', 'IBAN']);
-  return { rows, iban, entity: /^ES\d{2}(\d{4})/.exec(iban)?.[1] || '' };
+  // Saldos del extracto: CLBD = contable al cierre, CLAV/ITAV = disponible
+  const bal = {};
+  for (const m of text.matchAll(/<(?:\w+:)?Bal(?:\s[^>]*)?>([\s\S]*?)<\/(?:\w+:)?Bal>/gi)) {
+    const code = first(m[1], ['Tp', 'CdOrPrtry', 'Cd']).toUpperCase();
+    const a = /<(?:\w+:)?Amt[^>]*>([^<]+)</i.exec(m[1]);
+    let v = a ? parseAmount(a[1], '.') : null;
+    if (v !== null && /DBIT/i.test(first(m[1], ['CdtDbtInd']))) v = -Math.abs(v);
+    const dtPart = m[1].slice(Math.max(0, m[1].search(/<(?:\w+:)?Dt/i)));
+    bal[code] = { v, at: parseDate((/(\d{4}-\d{2}-\d{2})/.exec(dtPart) || [])[1] || '') };
+  }
+  const bk = bal.CLBD || bal.ITBD;
+  const av = bal.CLAV || bal.ITAV;
+  const balance = bk && bk.v !== null && bk.at ? { booked: bk.v, available: av?.v ?? null, at: bk.at } : null;
+  return { rows, iban, entity: /^ES\d{2}(\d{4})/.exec(iban)?.[1] || '', balance };
 }
 
 // ---------- Norma 43 (cuaderno 43 de la AEB) ----------
@@ -739,7 +757,7 @@ function sniff(buf, name) {
 async function parse({ name = '', buffer, text: ocrText, mapping, savedMapping }) {
   const warnings = [];
   const ctx = { mapping: mapping && Object.keys(mapping).length ? mapping : null };
-  let format, rows = [], bank = null, iban = '', entity = '', extraText = '', tableInfo = null, needsOcr = false;
+  let format, rows = [], bank = null, iban = '', entity = '', extraText = '', tableInfo = null, needsOcr = false, balance = null;
 
   if (typeof ocrText === 'string') {
     format = 'ocr';
@@ -781,11 +799,11 @@ async function parse({ name = '', buffer, text: ocrText, mapping, savedMapping }
       if (/OFXHEADER|<OFX>/i.test(head)) {
         format = /\.qfx$/i.test(name) ? 'qfx' : 'ofx';
         const r = ofxRows(text);
-        rows = r.rows; entity = r.entity; iban = r.iban; extraText = r.org;
+        rows = r.rows; entity = r.entity; iban = r.iban; extraText = r.org; balance = r.balance;
       } else if (/camt\.05[234]|<BkToCstmrStmt|<(\w+:)?Ntry>/i.test(text.slice(0, 20000))) {
         format = 'camt.053';
         const r = camtRows(text);
-        rows = r.rows; iban = r.iban; entity = r.entity;
+        rows = r.rows; iban = r.iban; entity = r.entity; balance = r.balance;
       } else if (isN43(text)) {
         format = 'norma43';
         const r = n43Rows(text);
@@ -836,6 +854,7 @@ async function parse({ name = '', buffer, text: ocrText, mapping, savedMapping }
     sample: tableInfo?.sample || null,
     mapping: tableInfo?.mapping || null,
     signature: tableInfo?.signature || null,
+    balance,
     warnings,
   };
 }

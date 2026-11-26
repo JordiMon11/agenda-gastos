@@ -1,6 +1,7 @@
 # Entorno de PRUEBAS en Render (gratis), separado de producción.
-# Se despliega solo desde la rama «pruebas» y guarda los datos en un archivo temporal:
-# se borran en cada actualización, así nunca se mezclan con los datos reales.
+# Se despliega solo desde la rama «pruebas». Guarda los datos en su PROPIA base de datos (DATABASE_URL),
+# distinta de la de producción: la app se niega a arrancar si se le da la base de datos de producción.
+# Sin DATABASE_URL usa un archivo temporal que se borra en cada actualización.
 # Crear: Render > New > Blueprint > repositorio agenda-gastos > rama «pruebas» > Blueprint path: render.pruebas.yaml
 services:
   - type: web
@@ -19,5 +20,7 @@ services:
         value: pruebas
       - key: APP_SECRET
         generateValue: true
+      - key: DATABASE_URL
+        sync: false
       - key: MAIL_FROM_NAME
         value: Agenda de Gastos (pruebas)

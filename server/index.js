@@ -19,6 +19,7 @@ const admin = require('./admin');
 const receipts = require('./receipts');
 const planning = require('./planning');
 const imports = require('./imports');
+const classifier = require('./classifier');
 const openbanking = require('./openbanking');
 const R = require('./recurrence');
 const L = require('./ledger');
@@ -82,12 +83,14 @@ app.use('/vendor/pdfjs', express.static(path.join(ROOT, 'node_modules', 'pdfjs-d
 app.use('/vendor/tessdata', express.static(path.join(ROOT, 'node_modules', '@tesseract.js-data', 'spa', '4.0.0_best_int'), longCache));
 
 // ---------- Rutas públicas ----------
+// Vuelta desde la web del banco tras autorizar la conexión (Open Banking, solo lectura)
+app.get('/banco-conectado', h(openbanking.callback));
 app.get('/healthz', (req, res) => res.json({ ok: true, cifrado: S.hasKey(), entorno: APP_ENV }));
 app.get('/api/public-config', (req, res) =>
   res.json({ downloadUrl: process.env.DESKTOP_DOWNLOAD_URL || 'https://github.com/JordiMon11/agenda-gastos/releases/latest/download/Agenda-Gastos-Setup.exe',
     releasesUrl: process.env.RELEASES_URL || 'https://github.com/JordiMon11/agenda-gastos/releases/latest',
     banner: db.settings.banner || '', bannerType: db.settings.bannerType || 'info', registrationOpen: !db.users.length || db.settings.registrationOpen !== false,
-    environment: APP_ENV })
+    environment: APP_ENV, persistent: store.persistent() })
 );
 // Disparador externo de los avisos (GitHub Actions lo llama cada 30 min y así también despierta el servidor gratuito).
 // Es seguro dejarlo público: solo revisa avisos pendientes y cada aviso se envía una única vez.
@@ -110,6 +113,7 @@ app.use('/api/admin', admin.router);
 app.use('/api', receipts.router);
 app.use('/api', planning.router);
 app.use('/api', imports.router);
+app.use('/api', classifier.router);
 app.use('/api', openbanking.router);
 
 // ---------- Categorías ----------
@@ -190,6 +194,7 @@ app.get('/api/expenses', (req, res) => {
 });
 app.post('/api/expenses', h(async (req, res) => {
   const e = { id: store.id(), userId: req.user.id, ...cleanExpense(req.body, req), ...(req.body?.scanned ? { scanned: true } : {}), createdAt: new Date().toISOString() };
+  classifier.onExpenseCreated(req.user, e, { userCategory: !!req.body?.categoryId }); // sin categoría: se clasifica sola
   db.expenses.push(e);
   store.save();
   res.json(e);
@@ -205,9 +210,21 @@ app.post('/api/expenses/:id/duplicate', h(async (req, res) => {
 }));
 app.put('/api/expenses/:id', h(async (req, res) => {
   const e = findMine(db.expenses, req);
+  const before = e.categoryId || null;
   Object.assign(e, cleanExpense({ ...req.body, refund: !!e.refund }, req));
+  // Si cambias la categoría, el movimiento queda confirmado y se propone una regla para los siguientes
+  let suggestRule = null;
+  if ((e.categoryId || null) !== before) {
+    e.review = 'confirmed';
+    e.cls = { ...(e.cls || {}), rule: 'Elegida por ti', source: 'manual', confidence: 1 };
+    const key = require('./classify').keyOf(e.place || e.name);
+    if (e.categoryId && key) {
+      const rule = { match: 'merchant', pattern: key, categoryId: e.categoryId };
+      suggestRule = { ...rule, merchant: e.cls.merchant || e.place || e.name, others: classifier.matchesOfRule(req.user, rule).filter((x) => x.e.id !== e.id).length };
+    }
+  } else if (e.review && e.review !== 'confirmed') e.review = 'confirmed';
   store.save();
-  res.json(e);
+  res.json({ ...e, suggestRule });
 }));
 app.delete('/api/expenses/:id', h(async (req, res) => {
   const e = findMine(db.expenses, req);

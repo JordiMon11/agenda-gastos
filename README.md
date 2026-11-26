@@ -163,6 +163,121 @@ En **Movimientos → Importar** (también desde Inicio, Gastos y Cuentas). El us
   - Nunca se piden ni guardan contraseñas del banco, ni se hacen pagos.
   - Los movimientos sincronizados pasarían por el mismo proceso de duplicados y clasificación.
 
+## Clasificación automática
+
+Todos los movimientos se clasifican solos:
+
+- los extractos importados y los bancos conectados;
+- los gastos que apuntas sin elegir categoría;
+- los tickets;
+- los ingresos, las transferencias y las devoluciones.
+
+Para cada movimiento se guardan:
+
+- la **categoría** y la **subcategoría**;
+- el **tipo**: gasto, compra con tarjeta, recibo, suscripción, comisión, retirada o ingreso de efectivo, transferencia a otra persona, traspaso entre tus cuentas, pago de la tarjeta de crédito, ingreso o devolución;
+- el **comercio**, la **regla** que lo ha clasificado, la **confianza** y su **estado de revisión**.
+
+Orden de prioridad:
+
+1. **Tus reglas**: el comercio es…, la descripción contiene…, o viene de / va a… (por ejemplo, una nómina). Si dos reglas tuyas se contradicen, el movimiento se marca para revisar.
+2. **Tu historial**: si ya has clasificado igual ese comercio al menos 2 veces.
+3. **Tus palabras**: lo que añadas en *Ajustes → Clasificación*.
+4. **Diccionario general de comercios españoles**: Mercadona → Alimentación, Repsol → Gasolina, Netflix → Suscripciones…
+   - Cada grupo se puede cambiar de categoría o desactivar.
+5. **IA (opcional y de pago)**: solo con `ANTHROPIC_API_KEY`. Se envía únicamente la descripción limpia, sin importes, números ni IBAN, y el resultado siempre queda para revisar.
+
+**Aprende de ti:** si cambias la categoría de un movimiento, la app pregunta si quieres aplicarla a los próximos de ese comercio y a los parecidos que aún no has confirmado.
+
+**Confianza:**
+
+| Confianza | Qué pasa |
+|---|---|
+| Alta (≥ 85 %) | Se clasifica solo |
+| Media (60–85 %) | Se clasifica y se marca para revisar |
+| Baja | Se queda pendiente |
+
+Los porcentajes no son inventados: salen de `node scripts/calibrar-clasificacion.js control`, que mide la precisión con `test/fixtures/clasificacion-control.json`. Son 66 movimientos con el formato real de los extractos españoles, que **no** se usan para ajustar el diccionario.
+
+- Resultado: 56 de 56 aciertos del diccionario. Con ese tamaño de muestra se declara 94 % (el límite inferior al 95 % de seguridad), no 100 %.
+- Ese conjunto imita extractos reales, pero no son tus datos: con tus movimientos la precisión puede ser algo menor. Para eso está la revisión.
+
+**Revisión inteligente** (*Movimientos → Revisión*) muestra:
+
+- los movimientos pendientes, los dudosos, los automáticos y los confirmados;
+- los posibles duplicados;
+- los posibles **traspasos entre tus cuentas** apuntados como gasto + ingreso, que puedes unir en una transferencia;
+- las reglas aprendidas hace poco.
+
+Además, puedes:
+
+- cambiar la categoría de varios movimientos a la vez;
+- **aceptar de golpe todos los de confianza alta** (se pueden seguir cambiando después).
+
+## Mi dinero (patrimonio)
+
+*Mi dinero → Patrimonio* muestra, sin contar nada dos veces:
+
+- el **patrimonio total** y lo **disponible para gastar** (cuentas corrientes y efectivo, menos lo apartado en huchas, los pagos fijos pendientes y el objetivo de ahorro);
+- lo **reservado para ahorro**, las cuentas corrientes, las de ahorro y depósitos, las huchas y el efectivo;
+- las **deudas de tarjetas**;
+- una tarjeta por cuenta con su porcentaje del total y la **evolución** de los últimos 6 meses.
+
+**Saldo real:** el saldo de una cuenta no es la suma de todo su historial. La referencia es el último saldo que comunica el banco: por la conexión, por el extracto (columna de saldo, o los saldos del OFX y del CAMT.053) o porque lo escribes tú con «Saldo real».
+
+- Se distinguen el saldo **contable**, el **disponible**, el **retenido** (la diferencia entre los dos) y el **estimado** (referencia + movimientos posteriores).
+- Siempre se muestra la fecha de actualización. Si pasan más de 3 días, se avisa de que puede estar desfasado.
+- Si tus movimientos no cuadran con el banco, se dice por cuánto.
+
+**Huchas:** al crear una hucha se indica dónde está el dinero.
+
+- **Dentro de una cuenta** (apartado virtual): se descuenta de lo disponible de esa cuenta y **no se suma otra vez** al total.
+- **Aparte**: sí se suma.
+- Las huchas antiguas que no lo indican se tratan como dentro de la cuenta principal, para que nunca se cuente dos veces el mismo dinero.
+
+**Traspasos:** los traspasos entre tus cuentas y los pagos de la tarjeta de crédito no cuentan como gasto ni como ingreso. Si la app no está segura de que las dos cuentas son tuyas, te pide confirmación.
+
+## Conexión con bancos (Open Banking, solo lectura)
+
+Comparación de proveedores (noviembre de 2026):
+
+| Proveedor | Bancos españoles | Coste | Estado |
+|---|---|---|---|
+| **Enable Banking** | Sí (consulta la lista en su portal) | **Gratis para uso personal** con tus propias cuentas («restricted mode») | **Elegido** |
+| GoCardless Bank Account Data | Sí | Era gratis | **Cerrado a clientes nuevos desde 2025** |
+| Tink (Visa) | Unos 30 en España | De pago, con contrato comercial | Descartado por coste |
+| Salt Edge | Sí | De pago o bajo presupuesto, poco claro | Descartado por coste |
+
+Cómo funciona:
+
+1. Eliges tu banco.
+2. Autorizas en la **web oficial de tu banco**. La app nunca ve ni guarda tus claves.
+3. Eliges qué cuentas añadir: las de ahorro y las huchas que el banco da aparte se detectan como ahorro. También puedes enlazar una cuenta que ya tenías.
+4. Se traen los saldos y los movimientos de los últimos 90 días, que pasan por la misma detección de duplicados y clasificación que un extracto.
+5. Se actualiza sola cada 6 horas (los bancos limitan las consultas). Ves cuándo se actualizó cada cuenta y un historial de sincronizaciones.
+6. El permiso caduca a los 90 días como máximo. La app avisa 7 días antes y al caducar, y se renueva con un clic.
+
+Es **solo lectura**: no existe ninguna función de pagos.
+
+- El identificador de la sesión con el banco se guarda **cifrado** (AES-256-GCM con `APP_SECRET`) y nunca sale por la API.
+- Puedes **desconectar** un banco y, si quieres, **borrar los movimientos** que trajo.
+
+Activarla con Enable Banking:
+
+1. Crea una cuenta en enablebanking.com y una aplicación en modo restringido (gratis), con la URL de vuelta `https://TU-WEB/banco-conectado`.
+2. En su panel, enlaza tus cuentas.
+3. Descarga la clave privada que te da.
+4. Pon en Render `ENABLEBANKING_APP_ID`, `ENABLEBANKING_PRIVATE_KEY` (el contenido del `.pem`) y `PUBLIC_URL`.
+
+Nota: el código de Enable Banking sigue su documentación pública, pero **no se ha podido probar contra el servicio real** sin esas credenciales. Todo el flujo sí está probado con el **banco de demostración**, que solo aparece en la web de pruebas o con `OPENBANKING_PROVIDER=demo`.
+
+**Privacidad y seguridad:**
+
+- Cada consulta comprueba que los datos son del usuario que la pide, y hay pruebas automáticas que lo verifican. Esta app usa PostgreSQL (Neon) y no Supabase, así que no hay «RLS de Supabase».
+- A la IA nunca se envían extractos ni datos bancarios completos.
+- Hay registro de importaciones, reversiones y sincronizaciones.
+- Tus datos se pueden exportar y borrar desde Ajustes.
+
 ## Asistente e inteligencia
 
 El asistente funciona **gratis y sin IA externa**: entiende la pregunta con reglas en español, consulta tus datos y **calcula las cifras en el servidor**. Así nunca inventa cantidades. Separación:
@@ -176,13 +291,15 @@ Si añades `ANTHROPIC_API_KEY`, las preguntas que las reglas no entienden se env
 | Rama | Se publica en | Datos |
 |---|---|---|
 | `main` | https://agenda-gastos.onrender.com (**producción**) | Neon (permanentes) |
-| `pruebas` | https://agenda-gastos-pruebas.onrender.com (**pruebas**) | Archivo temporal: se borran en cada actualización |
+| `pruebas` | https://agenda-gastos-pruebas.onrender.com (**pruebas**) | Su **propia** base de datos de Neon (permanentes). Sin ella, archivo temporal que se borra en cada actualización |
 
 Forma de trabajar:
 
 1. Los cambios se suben a la rama **`pruebas`**. GitHub ejecuta las **pruebas automáticas** (`.github/workflows/pruebas.yml`) y Render publica la web de pruebas, que muestra el aviso «Entorno de PRUEBAS».
 2. Se prueba allí con una cuenta de prueba y, si hace falta, con **datos de demostración** (Ajustes).
 3. Cuando todo está bien, se abre una *pull request* de `pruebas` a `main` (vuelven a pasar las pruebas) y al unirla se actualiza producción.
+
+**Base de datos de pruebas:** en Neon crea una base de datos nueva (por ejemplo `pruebas`) y copia su cadena de conexión en Render → `agenda-gastos-pruebas` → Environment → `DATABASE_URL`. Cada base de datos queda marcada con su entorno y la web de pruebas **se niega a arrancar** si recibe la de producción, así que no se pueden mezclar.
 
 Crear la web de pruebas en Render (una sola vez): **New → Blueprint →** repositorio `agenda-gastos` **→ rama `pruebas` → Blueprint path `render.pruebas.yaml` → Apply**. Ojo: el plan gratuito de Render reparte 750 horas al mes entre todos tus servicios; la web de pruebas se duerme sola cuando no se usa, así que apenas consume.
 

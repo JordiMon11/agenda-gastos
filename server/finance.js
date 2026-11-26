@@ -75,11 +75,14 @@ function cleanSaving(b) {
   const name = String(b?.name || '').trim().slice(0, 60);
   if (!name) throw new HttpError(400, 'La hucha necesita un nombre');
   const goal = b.goal === '' || b.goal == null ? null : money(b.goal, 'El objetivo debe ser mayor que 0');
-  return { name, goal, icon: ICON_RE.test(b.icon || '') ? b.icon : 'piggy-bank', color: COLOR_RE.test(b.color || '') ? b.color : '#16a34a' };
+  // Dónde está el dinero: dentro de una cuenta (apartado virtual, no se suma otra vez) o aparte (se suma al total)
+  const location = b.location === 'separada' ? 'separada' : 'virtual';
+  const accountId = location === 'virtual' && b.accountId && db.accounts.some((a) => a.id === b.accountId && a.userId === b._uid) ? b.accountId : null;
+  return { name, goal, icon: ICON_RE.test(b.icon || '') ? b.icon : 'piggy-bank', color: COLOR_RE.test(b.color || '') ? b.color : '#16a34a', location, accountId };
 }
 router.get('/savings', (req, res) => res.json(mine(db.savings, req).map(savingView)));
 router.post('/savings', h(async (req, res) => {
-  const s = { id: store.id(), userId: req.user.id, ...cleanSaving(req.body), createdAt: new Date().toISOString() };
+  const s = { id: store.id(), userId: req.user.id, ...cleanSaving({ ...req.body, _uid: req.user.id }), createdAt: new Date().toISOString() };
   db.savings.push(s);
   const initial = Number(req.body?.initial);
   if (initial > 0) db.savingMoves.push({ id: store.id(), userId: req.user.id, savingId: s.id, type: 'in', amount: money(initial), date: D.ymd(D.today()), note: 'Saldo inicial', createdAt: new Date().toISOString() });
@@ -88,7 +91,7 @@ router.post('/savings', h(async (req, res) => {
 }));
 router.put('/savings/:id', h(async (req, res) => {
   const s = findMine(db.savings, req);
-  Object.assign(s, cleanSaving(req.body));
+  Object.assign(s, cleanSaving({ ...s, ...req.body, _uid: req.user.id }));
   store.save();
   res.json(savingView(s));
 }));

@@ -179,7 +179,7 @@ test('CSV: banco, columnas, signos, clasificación, transferencias y devolucione
   // La regla aprendida se aplica la próxima vez
   const rule = await analyze(A, 'otro.csv', `Fecha;Concepto;Importe\n${dmy(2)};TIENDA RARA XJ;-9,00\n`);
   assert.equal(rule.rows[0].categoryId, cat('Compras'));
-  assert.equal(rule.rows[0].confidence, 0.98);
+  assert.equal(rule.rows[0].confidence, 0.97);
 
   // Otro usuario no puede importar en mis cuentas ni ver mi historial
   await assert.rejects(analyze(B, 'x.csv', csv), /cuenta/);

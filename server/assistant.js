@@ -70,7 +70,25 @@ function findAmount(q) {
 }
 const reply = (answer, extra = {}) => ({ answer, facts: [], items: [], suggestions: [], ...extra });
 
+// ¿Están al día los saldos? Se avisa siempre que una respuesta use saldos de cuentas
+function freshness(user) {
+  const accs = L.accountBalances(user);
+  const notes = [];
+  const stale = accs.filter((a) => a.stale);
+  const expired = (db.bankConnections || []).filter((c) => c.userId === user.id && (c.status === 'caducada' || (c.validUntil && c.validUntil < new Date().toISOString())));
+  for (const c of expired) notes.push(`La conexión con ${c.bankName} ha caducado: sus saldos pueden estar desfasados.`);
+  if (stale.length) {
+    const txt = stale.slice(0, 4).map((a) => (a.balances?.at ? `${a.name} (dato del banco del ${dLong(a.balances.at)})` : `${a.name} (calculado con tus movimientos)`)).join(', ');
+    notes.push(`Saldos sin confirmar con el banco en los últimos días: ${txt}.`);
+  } else if (accs.length) notes.push('Saldos confirmados con el banco en los últimos 3 días.');
+  return notes.join(' ');
+}
+const accLabel = (a) => `${a.name}${a.bankName ? ' · ' + a.bankName : ''}`;
+
 const HELP = [
+  '¿Cuánto dinero tengo en total?',
+  '¿Cuánto puedo gastar sin tocar mis ahorros?',
+  '¿Cuánto tengo en mis huchas?',
   '¿Cuánto he gastado este mes?',
   '¿Cuánto llevo gastado en restaurantes?',
   '¿Cuánto puedo gastar esta semana?',
@@ -129,6 +147,58 @@ function answerLocal(user, raw) {
   }
 
   const money = L.moneySummary(user);
+
+  // ---------- Patrimonio y cuentas (saldos reales de todas tus cuentas) ----------
+  if (/sin tocar (mis |los )?ahorros|sin usar (mis |los )?ahorros|sin tocar (la |las )?huchas/.test(q)) {
+    const w = L.wealth(user);
+    return reply(`Sin tocar tus ahorros puedes usar ${fmt(money.available)} hasta fin de mes. Es el dinero de tus cuentas para gastar y el efectivo (${fmt(w.spendable)}, ya sin lo apartado en huchas), menos los pagos fijos pendientes (${fmt(money.reservedBills)})${money.reservedSavings ? ` y lo que te falta para tu objetivo de ahorro (${fmt(money.reservedSavings)})` : ''}.`, {
+      facts: [{ label: 'Cuentas para gastar y efectivo', value: fmt(w.spendable) }, { label: 'Pagos pendientes', value: fmt(money.reservedBills) }, { label: 'Ahorros que no se tocan', value: fmt(w.reservedForSavings) }, { label: 'Al día', value: fmt(money.perDayBalance) }],
+      intent: 'spendable-safe', note: freshness(user),
+    });
+  }
+  if (/huchas?\b|apartado/.test(q) && !/crear|nueva|anadir/.test(q)) {
+    const w = L.wealth(user);
+    if (!w.piggies.length) return reply('No tienes huchas. Puedes crearlas en «Mi dinero → Ahorros» e indicar si el dinero está dentro de una cuenta o aparte.', { intent: 'piggies' });
+    return reply(`Tienes ${fmt(w.piggyTotal)} en ${w.piggies.length} hucha${w.piggies.length === 1 ? '' : 's'}.${w.piggies.some((p) => p.location === 'virtual') ? ' Las que están dentro de una cuenta ya forman parte de su saldo: no se suman dos veces.' : ''}`, {
+      items: w.piggies.map((p) => ({ label: p.name, value: fmt(p.balance), detail: p.location === 'separada' ? 'Aparte de tus cuentas' : `Dentro de ${db.accounts.find((a) => a.id === p.accountId)?.name || 'tu cuenta principal'}` })),
+      intent: 'piggies', note: freshness(user),
+    });
+  }
+  if (/(tengo|hay) ahorrado|mis ahorros|dinero ahorrado|cuanto ahorro tengo/.test(q) && !/este ano|este mes|ano pasado|mes pasado|conseguido/.test(q)) {
+    const w = L.wealth(user);
+    const savingAccs = w.accounts.filter((a) => a.group === 'ahorro');
+    return reply(`Tienes ${fmt(w.reservedForSavings)} ahorrados: ${fmt(w.byGroup.ahorro)} en cuentas de ahorro y depósitos y ${fmt(w.piggyTotal)} en huchas.`, {
+      items: [...savingAccs.map((a) => ({ label: accLabel(a), value: fmt(a.balance) })), ...w.piggies.map((p) => ({ label: `Hucha ${p.name}`, value: fmt(p.balance) }))],
+      intent: 'saved-stock', note: freshness(user),
+    });
+  }
+  const namedAcc = L.accountBalances(user).some((a) => norm(a.name).length >= 3 && q.includes(norm(a.name)));
+  if (!(namedAcc && !/en total|patrimonio/.test(q)) && (/en total|patrimonio|todo mi dinero|todas mis cuentas|cuanto dinero tengo|dinero tengo en total/.test(q) || (/cuanto tengo/.test(q) && !/cuenta|banco/.test(q) && !/gastad|pagar/.test(q)))) {
+    const w = L.wealth(user);
+    if (!w.accounts.length) return reply('Aún no has añadido tus cuentas, así que no sé cuánto dinero tienes. Añádelas en «Mi dinero» o conecta tu banco.', { intent: 'networth', link: { label: 'Mi dinero', href: '#/cuentas' } });
+    return reply(`En total tienes ${fmt(w.total)}. De eso, ${fmt(money.available)} está disponible para gastar este mes y ${fmt(w.reservedForSavings)} está ahorrado.`, {
+      facts: [
+        { label: 'Cuentas corrientes', value: fmt(w.byGroup.corriente) }, { label: 'Cuentas de ahorro', value: fmt(w.byGroup.ahorro) },
+        { label: 'Huchas', value: fmt(w.piggyTotal) }, { label: 'Efectivo', value: fmt(w.byGroup.efectivo) },
+        ...(w.debt ? [{ label: 'Deuda de tarjetas', value: fmt(w.debt) }] : []),
+      ],
+      items: w.accounts.map((a) => ({ label: accLabel(a), value: fmt(a.balance), detail: a.reserved ? `${fmt(a.reserved)} apartados en huchas` : '' })),
+      intent: 'networth', note: freshness(user), link: { label: 'Ver Mi dinero', href: '#/cuentas' },
+    });
+  }
+  {
+    const accsAll = L.accountBalances(user);
+    const named = accsAll.find((a) => norm(a.name).length >= 3 && q.includes(norm(a.name)));
+    const main = /cuenta principal|cuenta corriente|cuenta de la nomina|cuenta nomina/.test(q) ? (L.defaultAccount(user) && accsAll.find((a) => a.id === L.defaultAccount(user).id)) : null;
+    const acc = named || main;
+    if (acc && /cuanto|saldo|tengo|hay/.test(q)) {
+      const b = acc.balances;
+      return reply(`En ${acc.name} tienes ${fmt(acc.balance)}${b.source !== 'calculado' ? (acc.confirmed ? ', confirmado con el banco' : ` (el banco dio ${fmt(b.booked)} el ${dLong(b.at)} y se han sumado los movimientos de después)`) : ' (calculado con tus movimientos; no hay saldo del banco)'}.`, {
+        facts: [...(b.available != null ? [{ label: 'Disponible según el banco', value: fmt(b.available) }] : []), ...(b.pending ? [{ label: 'Retenido o pendiente', value: fmt(b.pending) }] : [])],
+        intent: 'account', note: freshness(user),
+      });
+    }
+  }
   if (/puedo gastar|me queda para gastar|disponible para gastar|cuanto gasto (hoy|al dia)/.test(q)) {
     const week = /semana/.test(q);
     const daysWeek = 7 - ((t.getDay() + 6) % 7);
@@ -179,7 +249,7 @@ function answerLocal(user, raw) {
     return reply(`Tus ${/suscrip/.test(q) ? 'suscripciones' : 'gastos fijos'} suman ${fmt(round(list.reduce((a, s) => a + s.monthly, 0)))} al mes.`, { items: list.map((s) => ({ label: `${s.name} (${s.frequency.toLowerCase()})`, value: `${fmt(s.amount)}` })), intent: 'fixed' });
   }
 
-  if (/ahorrad|he ahorrado|mis ahorros|cuanto ahorro|tasa de ahorro/.test(q)) {
+  if (/ahorrad|he ahorrado|mis ahorros|cuanto ahorro|tasa de ahorro|conseguido ahorrar/.test(q)) {
     const p = parsePeriod(q, t);
     const inc = sum(incs.filter((i) => i.date >= p.from && i.date <= p.to));
     const exp = sum(exps.filter((e) => e.date >= p.from && e.date <= p.to));
@@ -189,7 +259,7 @@ function answerLocal(user, raw) {
   if (/saldo|cuanto dinero tengo|dinero tengo|cuanto tengo/.test(q)) {
     const accs = L.accountBalances(user);
     if (!accs.length) return reply('Aún no has añadido tus cuentas, así que no sé tu saldo. Añádelas en «Cuentas» con su saldo actual.', { intent: 'balance', link: { label: 'Añadir cuenta', href: '#/cuentas' } });
-    return reply(`Tienes ${fmt(money.balance)} en tus cuentas. Descontando pagos pendientes y tu objetivo de ahorro, tienes disponibles ${fmt(money.available)}.`, { items: accs.map((a) => ({ label: a.name, value: fmt(a.balance) })), facts: [{ label: 'En huchas', value: fmt(money.savings) }], intent: 'balance' });
+    return reply(`Tienes ${fmt(money.balance)} en tus cuentas. Descontando pagos pendientes y tu objetivo de ahorro, tienes disponibles ${fmt(money.available)}.`, { note: freshness(user), items: accs.map((a) => ({ label: a.name, value: fmt(a.balance) })), facts: [{ label: 'En huchas', value: fmt(money.savings) }], intent: 'balance' });
   }
 
   if (/(categoria|que) .*(aumentado|subido|crecido|incrementado)|mas ha (subido|aumentado)|(aumentado|subido) mas/.test(q)) {
@@ -271,6 +341,9 @@ function aggregatedContext(user) {
     disponible_hasta_fin_de_mes: money.available,
     pagos_fijos_pendientes_mes: money.reservedBills,
     en_huchas: money.savings,
+    patrimonio_total: money.netWorth,
+    en_cuentas_de_ahorro: money.inSavingsAccounts,
+    cuentas_con_saldo_sin_confirmar: money.stale.length,
     meses: I.monthSeries(user, 6, t).map((m) => ({ mes: m.month, ingresos: m.incomes, gastos: m.expenses })),
     categorias: I.categoryComparison(user, t).slice(0, 12).map((c) => ({ categoria: c.name, este_mes: c.current, mes_pasado: c.previous, media_3_meses: c.avg3 })),
     gastos_fijos_mensuales: round(I.subscriptions(user).reduce((a, s) => a + s.monthly, 0)),

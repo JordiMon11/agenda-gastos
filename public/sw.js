@@ -1,6 +1,6 @@
 // Service worker: permite instalar la app y abrirla rápido. Los datos (/api) siempre van a la red.
-const CACHE = 'agenda-gastos-v7';
-const SHELL = ['/', '/styles.css', '/app.js', '/plan.js', '/receipt.js', '/importar.js', '/theme.js', '/icons.js', '/vendor/chart.umd.js', '/fonts/inter-latin-standard-normal.woff2', '/manifest.webmanifest', '/icons/icon-192.png'];
+const CACHE = 'agenda-gastos-v8';
+const SHELL = ['/', '/styles.css', '/app.js', '/plan.js', '/receipt.js', '/importar.js', '/dinero.js', '/theme.js', '/icons.js', '/vendor/chart.umd.js', '/fonts/inter-latin-standard-normal.woff2', '/manifest.webmanifest', '/icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

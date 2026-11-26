@@ -31,6 +31,7 @@ async function init() {
     await pool.query('CREATE INDEX IF NOT EXISTS blobs_user ON blobs (user_id)');
     const r = await pool.query('SELECT data FROM app_state WHERE id = 1');
     if (r.rows[0]) Object.assign(db, structuredClone(EMPTY), r.rows[0].data);
+    guardEnvironment();
     console.log('   Datos: PostgreSQL ✅');
   } else {
     fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -40,6 +41,25 @@ async function init() {
     console.log(`   Datos: archivo local (${FILE})`);
   }
 }
+
+// Cada base de datos queda marcada con su entorno. La web de PRUEBAS se niega a arrancar con la base de datos
+// de PRODUCCIÓN (o con cualquier base que ya tenga usuarios y no esté marcada), para no tocar nunca datos reales.
+function guardEnvironment() {
+  const env = process.env.APP_ENV || 'produccion';
+  const mark = db.settings?.environment || null;
+  if (env === 'pruebas') {
+    if (mark === 'produccion' || (!mark && db.users.length)) {
+      throw new Error('DATABASE_URL apunta a una base de datos de PRODUCCIÓN (o con datos sin marcar). La web de pruebas necesita su propia base de datos.');
+    }
+  } else if (mark === 'pruebas') {
+    console.warn('⚠️  Esta base de datos está marcada como de PRUEBAS y se está usando en producción.');
+  }
+  if (!mark) {
+    db.settings = { ...(db.settings || {}), environment: env };
+    save();
+  }
+}
+const persistent = () => !!pool;
 
 // Guardado: en PostgreSQL las escrituras se encadenan y se agrupan
 let chain = Promise.resolve();
@@ -105,4 +125,4 @@ async function deleteUserData(userId) {
   return save();
 }
 
-module.exports = { db, init, save, flush, id, DATA_DIR, USER_COLLECTIONS, putBlob, getBlob, delBlobs, deleteUserData };
+module.exports = { db, init, save, flush, id, persistent, DATA_DIR, USER_COLLECTIONS, putBlob, getBlob, delBlobs, deleteUserData };

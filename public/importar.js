@@ -1,8 +1,9 @@
 /* Agenda de Gastos · importar movimientos desde el extracto del banco (CSV, Excel, PDF, OFX, CAMT.053, Norma 43 y fotos) */
 (() => {
   const IMP = { tab: 'importar', step: 'pick', accountId: '', file: null, an: null, rows: [], filter: 'all', q: '', sort: 'date', dir: -1, shown: 200, result: null, mapping: null, cfg: null };
-  const TYPES = { expense: 'Gasto', card: 'Pago con tarjeta', bill: 'Recibo', fee: 'Comisión', cash_withdrawal: 'Retirada efectivo', income: 'Ingreso', refund: 'Devolución', cash_deposit: 'Ingreso efectivo', transfer: 'Transferencia' };
-  const OUT = ['expense', 'card', 'bill', 'fee', 'cash_withdrawal', 'transfer'];
+  const TYPES = { expense: 'Gasto', card: 'Pago con tarjeta', bill: 'Recibo', subscription: 'Suscripción', fee: 'Comisión', cash_withdrawal: 'Retirada efectivo', transfer_out: 'Transferencia a otra persona', card_settlement: 'Pago de tarjeta de crédito', income: 'Ingreso', refund: 'Devolución', cash_deposit: 'Ingreso efectivo', transfer: 'Traspaso entre mis cuentas' };
+  const OUT = ['expense', 'card', 'bill', 'subscription', 'fee', 'cash_withdrawal', 'transfer_out', 'card_settlement', 'transfer'];
+  const CP_TYPES = ['transfer', 'cash_withdrawal', 'cash_deposit', 'card_settlement'];
   const IN = ['income', 'refund', 'cash_deposit', 'transfer'];
   const STATUS = { new: ['Nuevo', 'ok'], possible: ['¿Duplicado?', 'warn'], duplicate: ['Ya importado', ''], review: ['Revisar', 'primary'] };
   const ACCEPT = '.csv,.txt,.tsv,.xls,.xlsx,.pdf,.ofx,.qfx,.xml,.n43,.aeb,.q43,.html,.htm,image/jpeg,image/png,image/webp';
@@ -15,11 +16,10 @@
     if (!accs.length) await loadAccounts();
     if (!IMP.accountId || !accOf(IMP.accountId)) IMP.accountId = (accs.find((a) => a.isDefault) || accs[0])?.id || '';
     const tab = (k, i, t) => `<button data-t="${k}" class="${IMP.tab === k ? 'on' : ''}">${ic(i, 'sm')}${t}</button>`;
-    el.innerHTML = `<div class="tabs-bar"><div class="seg" id="impTabs">${tab('importar', 'upload', 'Importar')}${tab('historial', 'history', 'Historial')}${tab('reglas', 'sliders-horizontal', 'Reglas')}</div></div><div id="impBody"></div>`;
+    el.innerHTML = `<div class="tabs-bar"><div class="seg" id="impTabs">${tab('importar', 'upload', 'Importar')}${tab('historial', 'history', 'Historial')}</div><a class="btn sm" href="#/clasificacion">${ic('tag', 'sm')}Reglas de clasificación</a></div><div id="impBody"></div>`;
     $$('#impTabs button').forEach((b) => (b.onclick = () => { IMP.tab = b.dataset.t; renderImport(el); }));
     const body = $('#impBody');
     if (IMP.tab === 'historial') return renderHistory(body);
-    if (IMP.tab === 'reglas') return renderRules(body);
     if (IMP.step === 'review' && IMP.an) return renderReview(body);
     if (IMP.step === 'mapping' && IMP.an) return renderMapping(body);
     if (IMP.step === 'done' && IMP.result) return renderDone(body);
@@ -179,8 +179,9 @@
   }
   function rowHtml(r) {
     const types = (isOut(r) ? OUT : IN).map((t) => `<option value="${t}" ${t === r.type ? 'selected' : ''}>${TYPES[t]}</option>`).join('');
-    const needsCp = ['transfer', 'cash_withdrawal', 'cash_deposit'].includes(r.type);
-    const cp = needsCp ? `<select data-f="counterpartId" class="imp-cp"><option value="">${r.type === 'transfer' ? 'A otra persona / externa' : 'Sin cuenta de efectivo'}</option>${accs.filter((a) => a.id !== IMP.accountId).map((a) => `<option value="${a.id}" ${a.id === r.counterpartId ? 'selected' : ''}>${isOut(r) ? '→ ' : '← '}${esc(a.name)}</option>`).join('')}</select>` : '';
+    const needsCp = CP_TYPES.includes(r.type);
+    const newCredit = r.type === 'card_settlement' && !accs.some((a) => a.type === 'credito') ? `<option value="new:credito" ${r.counterpartId === 'new:credito' ? 'selected' : ''}>→ Nueva cuenta «Tarjeta de crédito»</option>` : '';
+    const cp = needsCp ? `<select data-f="counterpartId" class="imp-cp"><option value="">${r.type === 'transfer' ? 'A otra persona / externa' : r.type === 'card_settlement' ? 'Contarlo como gasto' : 'Sin cuenta de efectivo'}</option>${newCredit}${accs.filter((a) => a.id !== IMP.accountId).map((a) => `<option value="${a.id}" ${a.id === r.counterpartId ? 'selected' : ''}>${isOut(r) ? '→ ' : '← '}${esc(a.name)}</option>`).join('')}</select>` : '';
     const dup = r.status === 'possible' || r.status === 'duplicate'
       ? `<select data-f="dupAction" class="imp-dup"><option value="skip" ${r.dupAction === 'skip' ? 'selected' : ''}>No importar</option>${r.status === 'possible' ? `<option value="link" ${r.dupAction === 'link' ? 'selected' : ''}>Es el mismo: vincular</option>` : ''}<option value="import" ${r.dupAction === 'import' ? 'selected' : ''}>Importar igualmente</option></select>` : '';
     const [st, cls] = STATUS[r.status] || STATUS.new;
@@ -189,12 +190,12 @@
       <td><input type="checkbox" data-f="selected" ${r.selected ? 'checked' : ''} ${r.error && !D_OK(r.date) ? 'disabled' : ''} aria-label="Importar"></td>
       <td><input type="date" data-f="date" value="${esc(r.date || '')}" class="imp-date ${r.date ? '' : 'bad'}"></td>
       <td class="imp-desc"><input data-f="description" value="${esc(r.description)}" maxlength="300">
-        <small>${r.merchant ? `${ic('store', 'sm')}${esc(r.merchant)}` : ''}${r.notes.length ? ` · ${esc(r.notes.join(' · '))}` : ''}${r.dupOf ? ` <span class="muted">(${esc(r.dupOf.name)} · ${dmyTxt(r.dupOf.date)} · ${eur(Math.abs(r.dupOf.amount))})</span>` : ''}</small></td>
+        <small>${r.merchant ? `${ic('store', 'sm')}${esc(r.merchant)}` : ''}${r.subcategory ? ` · ${esc(r.subcategory)}` : ''}${r.notes.length ? ` · ${esc(r.notes.join(' · '))}` : ''}${r.dupOf ? ` <span class="muted">(${esc(r.dupOf.name)} · ${dmyTxt(r.dupOf.date)} · ${eur(Math.abs(r.dupOf.amount))})</span>` : ''}</small></td>
       <td>${catOptions(r)}</td>
       <td><select data-f="type">${types}</select>${cp}</td>
       <td class="num nowrap">${signed(r.amount)}</td>
       <td><span class="badge ${cls}">${st}</span>${dup}</td>
-      <td class="num"><span class="conf ${conf >= 80 ? 'conf-alta' : conf >= 50 ? 'conf-media' : 'conf-baja'}" title="${esc(r.reason || '')}">${conf}%</span></td>
+      <td class="num"><span class="conf ${conf >= 85 ? 'conf-alta' : conf >= 60 ? 'conf-media' : 'conf-baja'}" title="${esc(r.rule || r.reason || '')}">${conf}%</span></td>
     </tr>`;
   }
   const D_OK = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
@@ -274,8 +275,8 @@
     if (f === 'selected') { r.selected = e.target.checked; if (r.dupAction) r.dupAction = r.selected ? 'import' : 'skip'; }
     else if (f === 'dupAction') { r.dupAction = e.target.value; r.selected = r.dupAction === 'import'; }
     else if (f === 'date') { r.date = e.target.value; if (D_OK(r.date) && r.error?.startsWith('Fecha')) { r.error = ''; r.notes = r.notes.filter((n) => !n.startsWith('Fecha')); r.selected = true; } }
-    else if (f === 'type') { r.type = e.target.value; if (!['transfer', 'cash_withdrawal', 'cash_deposit'].includes(r.type)) r.counterpartId = null; }
-    else r[f] = e.target.value || null;
+    else if (f === 'type') { r.type = e.target.value; r.edited = true; if (!CP_TYPES.includes(r.type)) r.counterpartId = null; }
+    else { r[f] = e.target.value || null; if (f === 'categoryId') r.edited = true; }
     if (f === 'description') r.description = e.target.value;
     if (['type', 'selected', 'dupAction', 'date'].includes(f)) { const nr = document.createElement('tbody'); nr.innerHTML = rowHtml(r); hydrate(nr); tr.replaceWith(nr.firstElementChild); }
     else tr.classList.toggle('off', !willImport(r));
@@ -294,7 +295,7 @@
     btn.disabled = true;
     btn.textContent = 'Importando…';
     try {
-      IMP.result = await api('/imports/commit', { method: 'POST', body: { accountId: IMP.accountId, fileName: an.fileName, format: an.format, bank: an.bank?.name || '', detected: IMP.rows.length, rows } });
+      IMP.result = await api('/imports/commit', { method: 'POST', body: { accountId: IMP.accountId, fileName: an.fileName, format: an.format, bank: an.bank?.name || '', detected: IMP.rows.length, statementBalance: an.statementBalance || null, rows } });
       await Promise.all([loadAccounts(), api('/categories').then((c) => { cats.length = 0; cats.push(...c); }).catch(() => {})]);
       IMP.step = 'done';
       IMP.an = null;

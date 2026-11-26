@@ -4,7 +4,7 @@
 let accs = [];
 const ACC_TYPES = {
   corriente: ['Cuenta corriente', 'landmark'], ahorro: ['Cuenta de ahorro', 'piggy-bank'], efectivo: ['Efectivo', 'banknote'],
-  credito: ['Tarjeta de crédito', 'credit-card'], debito: ['Tarjeta de débito', 'wallet-cards'], otra: ['Otra', 'wallet'],
+  credito: ['Tarjeta de crédito', 'credit-card'], debito: ['Tarjeta de débito', 'wallet-cards'], deposito: ['Depósito', 'lock'], otra: ['Otra', 'wallet'],
 };
 const PAY_METHODS = { tarjeta: 'Tarjeta', efectivo: 'Efectivo', bizum: 'Bizum', transferencia: 'Transferencia', domiciliacion: 'Domiciliación', otro: 'Otro' };
 async function loadAccounts() {
@@ -32,6 +32,11 @@ function accountForm(a = {}) {
     html: `
       <label class="field">Nombre<input name="name" required maxlength="60" value="${esc(a.name || '')}" placeholder="Ej: Cuenta nómina, Tarjeta, Efectivo"></label>
       <label class="field">Tipo<select name="type">${Object.entries(ACC_TYPES).map(([k, [l]]) => `<option value="${k}" ${a.type === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <div class="row">
+        <label class="field">Banco (opcional)<input name="bankName" maxlength="40" value="${esc(a.bankName || '')}" placeholder="Ej: CaixaBank"></label>
+        <label class="field">IBAN (opcional)<input name="iban" maxlength="34" value="${esc(a.iban || '')}" placeholder="ES00 …" autocomplete="off"></label>
+      </div>
+      <p class="set-desc" style="margin-top:-6px">Del IBAN solo se guardan los 4 primeros y los 4 últimos caracteres.</p>
       <div class="row">
         <label class="field">Saldo${a.id ? ' inicial' : ' actual'}<div class="input-money"><input name="initialBalance" type="number" step="0.01" inputmode="decimal" required value="${a.initialBalance ?? ''}" placeholder="0,00"><span>€</span></div></label>
         <label class="field">A fecha de<input name="balanceDate" type="date" required value="${a.balanceDate || ymd(todayD())}"></label>
@@ -102,67 +107,7 @@ async function accountMovements(a) {
         <div class="main"><b>${esc(m.name)}</b><small>${fmtDate(m.date, { day: 'numeric', month: 'short', year: 'numeric' })}${m.counted ? '' : ' · anterior al saldo inicial'}</small></div><div class="amt">${signed(m.amount)}</div></div>`).join('') || emptyHtml('list', 'Sin movimientos', '')}</div>`,
   });
 }
-async function renderAccounts(el) {
-  const [list, ov, transfers] = await Promise.all([loadAccounts(), api('/overview'), api('/transfers')]);
-  const m = ov.money;
-  el.innerHTML = `
-  <div class="grid g4 stats">
-    <div class="card stat"><div class="top"><span class="label">Saldo bancario</span><span class="ichip">${ic('landmark')}</span></div><div><div class="value">${eur(m.balance)}</div><div class="sub">${list.length} cuenta${list.length === 1 ? '' : 's'}</div></div></div>
-    <div class="card stat"><div class="top"><span class="label">Disponible</span><span class="ichip green">${ic('wallet')}</span></div><div><div class="value">${eur(m.available)}</div><div class="sub">${eur(m.perDay)} al día hasta fin de mes</div></div></div>
-    <div class="card stat"><div class="top"><span class="label">Reservado</span><span class="ichip amber">${ic('lock')}</span></div><div><div class="value">${eur(m.reservedBills + m.reservedSavings)}</div><div class="sub">Pagos pendientes y objetivo de ahorro</div></div></div>
-    <a class="card stat" href="#/ahorros" style="color:inherit"><div class="top"><span class="label">Ahorro acumulado</span><span class="ichip">${ic('piggy-bank')}</span></div><div><div class="value">${eur(m.savings)}</div><div class="sub">En tus huchas</div></div></a>
-  </div>
-  <div class="toolbar" style="justify-content:space-between">
-    <div class="muted" style="font-size:14px">El saldo se calcula con tus movimientos. Ajústalo si no coincide con el banco.</div>
-    <div class="btn-group"><button class="btn" id="btnImpAcc">${ic('upload', 'sm')}Importar extracto</button><button class="btn" id="btnTransfer">${ic('arrow-left-right', 'sm')}Transferir entre cuentas</button></div>
-  </div>
-  <div class="grid g3" id="accGrid">
-    ${list.map((a) => `<div class="card acc-card" data-id="${a.id}">
-      <div class="top">${accIc(a)}<div class="main"><b>${esc(a.name)}</b><small>${esc(a.typeLabel)}${a.id === me.finance?.defaultAccountId ? ' · Principal' : ''}</small></div>${a.demo ? '<span class="badge warn">Demo</span>' : ''}</div>
-      <div class="acc-balance ${a.balance < 0 ? 'neg' : ''}">${eur(a.balance)}</div>
-      <div class="acc-flow"><span>${ic('arrow-down-left', 'xs')}${eur(a.monthIn)} este mes</span><span>${ic('arrow-up-right', 'xs')}${eur(a.monthOut)}</span></div>
-      <div class="btns">
-        <button class="btn sm" data-mov="${a.id}">${ic('list', 'sm')}Movimientos</button>
-        <button class="icon-btn sm" data-adj="${a.id}" title="Ajustar saldo">${ic('scale', 'sm')}</button>
-        <button class="icon-btn sm" data-tr="${a.id}" title="Transferir">${ic('arrow-left-right', 'sm')}</button>
-        <button class="icon-btn sm" data-edit="${a.id}" title="Editar">${ic('pencil', 'sm')}</button>
-        <button class="icon-btn sm danger" data-del="${a.id}" title="Eliminar">${ic('trash-2', 'sm')}</button>
-      </div></div>`).join('') || `<div class="card span2">${emptyHtml('landmark', 'Añade tu primera cuenta', 'Indica tu cuenta del banco, tarjeta o efectivo con su saldo actual para saber cuánto dinero tienes de verdad.', `<button class="btn primary sm" id="emptyAcc">${ic('plus', 'sm')}Añadir cuenta</button>`)}</div>`}
-  </div>
-  <div class="grid g2">
-    <div class="card"><div class="card-head"><h3>${ic('arrow-left-right', 'sm')}Transferencias y ajustes</h3></div>
-      <div class="list" id="trList">${transfers.slice(0, 12).map((t) => `<div class="li"><span class="ichip sm ${t.type === 'adjust' ? 'amber' : ''}">${ic(t.type === 'adjust' ? 'scale' : 'arrow-left-right', 'sm')}</span>
-        <div class="main"><b>${t.type === 'adjust' ? `Ajuste · ${esc(accOf(t.toId)?.name || '')}` : `${esc(accOf(t.fromId)?.name || '?')} → ${esc(accOf(t.toId)?.name || '?')}`}</b><small>${fmtDate(t.date)}${t.note ? ' · ' + esc(t.note) : ''}</small></div>
-        <div class="amt">${t.type === 'adjust' ? signed(t.amount) : eur(t.amount)}</div><div class="row-actions"><button class="icon-btn sm danger" data-deltr="${t.id}" title="Eliminar">${ic('trash-2', 'sm')}</button></div></div>`).join('') || emptyHtml('arrow-left-right', 'Sin transferencias', 'Mover dinero entre tus cuentas no cuenta como gasto.')}</div></div>
-    <div class="card"><div class="card-head"><h3>${ic('shield-check', 'sm')}Conexión con tu banco</h3><span class="badge">Próximamente</span></div>
-      <p class="set-desc">La app está preparada para conectarse a bancos europeos mediante proveedores autorizados de <b>Open Banking (PSD2)</b>, siempre con tu consentimiento explícito y revocable.</p>
-      <p class="set-desc">Nunca te pediremos ni guardaremos tus claves del banco. Mientras tanto, apunta tus movimientos o escanea tus tickets.</p>
-    </div>
-  </div>`;
-  $('#emptyAcc')?.addEventListener('click', () => accountForm());
-  $('#btnTransfer').onclick = () => transferForm();
-  $('#btnImpAcc').onclick = () => openImport();
-  $('#accGrid').onclick = (ev) => {
-    const b = ev.target.closest('button');
-    if (!b) return;
-    const a = list.find((x) => x.id === (b.dataset.mov || b.dataset.adj || b.dataset.tr || b.dataset.edit || b.dataset.del));
-    if (!a) return;
-    if (b.dataset.mov) accountMovements(a);
-    if (b.dataset.adj) adjustForm(a);
-    if (b.dataset.tr) transferForm(a.id);
-    if (b.dataset.edit) accountForm(a);
-    if (b.dataset.del) confirmModal('Eliminar cuenta', `¿Eliminar <b>${esc(a.name)}</b>? Sus gastos e ingresos se mantienen (pasarán a la cuenta principal) y se borran sus transferencias.`, async () => {
-      await api('/accounts/' + a.id, { method: 'DELETE' });
-      await loadAccounts();
-      toast('Cuenta eliminada');
-      route();
-    });
-  };
-  $('#trList').onclick = (ev) => {
-    const b = ev.target.closest('[data-deltr]');
-    if (b) confirmModal('Eliminar movimiento', '¿Eliminar esta transferencia o ajuste? Los saldos se recalcularán.', async () => { await api('/transfers/' + b.dataset.deltr, { method: 'DELETE' }); await loadAccounts(); toast('Eliminado'); route(); });
-  };
-}
+// La pantalla de patrimonio (cuentas, huchas y bancos conectados) está en dinero.js
 
 // ================= PRESUPUESTOS =================
 function budgetForm(b = {}, preset = {}) {

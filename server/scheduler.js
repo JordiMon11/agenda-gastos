@@ -82,6 +82,8 @@ async function run() {
   running = true;
   try {
     for (const user of db.users) await checkUser(user);
+    // Bancos conectados: saldos y movimientos nuevos (cada conexión como mucho cada 6 horas)
+    await require('./openbanking').autoSync().catch((e) => console.error('[bancos]', e.message));
   } finally {
     running = false;
   }
