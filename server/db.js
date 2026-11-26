@@ -11,11 +11,12 @@ const EMPTY = {
   users: [], sessions: [], categories: [], expenses: [], recurring: [], incomes: [], savings: [], savingMoves: [],
   securityLog: [], adminLog: [], passwordResets: [], settings: { registrationOpen: true, banner: '' },
   accounts: [], transfers: [], budgets: [], notifications: [], receipts: [],
+  imports: [], importRules: [], importMappings: [], bankConnections: [],
 };
 // Colecciones con datos de cada usuario (para exportarlos o borrarlos)
 const USER_COLLECTIONS = [
   'sessions', 'categories', 'expenses', 'recurring', 'incomes', 'savings', 'savingMoves', 'securityLog', 'passwordResets',
-  'accounts', 'transfers', 'budgets', 'notifications', 'receipts',
+  'accounts', 'transfers', 'budgets', 'notifications', 'receipts', 'imports', 'importRules', 'importMappings', 'bankConnections',
 ];
 
 const db = structuredClone(EMPTY); // objeto compartido: nunca se reasigna, solo se modifica

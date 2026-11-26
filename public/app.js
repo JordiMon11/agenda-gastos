@@ -445,7 +445,7 @@ async function renderDashboard(el) {
 
   el.innerHTML = `
   ${!ov.hasData && !m.hasAccounts ? `<div class="card welcome-card"><span class="ichip lg">${ic('rocket', 'lg')}</span><div><b>Empieza en 3 pasos</b><p>Añade tu cuenta con su saldo, apunta un gasto (o escanea un ticket) y registra tu nómina. También puedes probar con datos de demostración.</p></div>
-    <div class="btns"><a class="btn primary sm" href="#/cuentas">${ic('landmark', 'sm')}Añadir cuenta</a><button class="btn sm" data-act="onboarding">${ic('sparkles', 'sm')}Asistente de inicio</button></div></div>` : ''}
+    <div class="btns"><a class="btn primary sm" href="#/cuentas">${ic('landmark', 'sm')}Añadir cuenta</a><a class="btn sm" href="#/importar">${ic('upload', 'sm')}Importar extracto del banco</a><button class="btn sm" data-act="onboarding">${ic('sparkles', 'sm')}Asistente de inicio</button></div></div>` : ''}
   <div class="grid g3">
     <div class="hero span2">
       <div>
@@ -457,6 +457,7 @@ async function renderDashboard(el) {
       </div>
       <div class="foot">
         ${m.hasAccounts ? `<div><b>${eur(m.available)}</b>disponible</div><div><b>${eur(m.reservedBills)}</b>reservado para pagos</div>` : `<div><a href="#/cuentas" style="color:#fff;text-decoration:underline">Añade tus cuentas</a> para ver tu saldo</div>`}
+        ${m.hasAccounts ? `<div><a href="#/importar" class="hero-link">${ic('upload', 'xs')}Importar extracto</a></div>` : ''}
         <div><b>${m.budgetRemaining === null ? '—' : eur(m.budgetRemaining)}</b>${m.budgetRemaining === null ? '<a href="#/presupuestos" style="color:#fff;text-decoration:underline">sin presupuesto</a>' : 'presupuesto restante'}</div>
         ${general ? `<div style="min-width:160px;flex:1;max-width:240px"><b>${general.percent}% <span style="font-weight:500;opacity:.8;font-size:13px">del presupuesto</span></b><div class="progress thin" style="margin-top:7px"><div style="width:${Math.min(100, general.percent)}%"></div></div></div>` : ''}
       </div>
@@ -545,6 +546,7 @@ async function renderExpenses(el) {
     <select id="fCat"><option value="">Todas las categorías</option><option value="none">Sin categoría</option>${cats.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
     <div class="input-icon grow">${ic('search')}<input type="search" id="fQ" placeholder="Buscar concepto, lugar o nota…" value="${esc(state.q)}"></div>
     ${accs.length ? `<select id="fAcc"><option value="">Todas las cuentas</option>${accs.map((a) => `<option value="${a.id}" ${state.acc === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>` : ''}
+    <button class="btn" id="btnImp">${ic('upload', 'sm')}Importar extracto</button>
     <button class="btn" id="btnCsv">${ic('file-spreadsheet', 'sm')}Exportar</button>
   </div>
   <div class="card"><div id="tbl"><div class="skeleton" style="height:240px"></div></div></div>`;
@@ -586,6 +588,7 @@ async function renderExpenses(el) {
   let qt;
   $('#fQ').oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => { state.q = e.target.value; load(); }, 250); };
   $('#btnCsv').onclick = exportModal;
+  $('#btnImp').onclick = () => openImport();
   $('#fAcc')?.addEventListener('change', (e) => { state.acc = e.target.value; load(); });
   await load();
 }
@@ -1871,7 +1874,7 @@ function forcePasswordChange() {
 // ---------- Secciones del menú (cada una con sus pestañas) ----------
 const GROUPS = {
   dashboard: { label: 'Inicio', icon: 'layout-dashboard', views: ['dashboard'] },
-  movimientos: { label: 'Movimientos', icon: 'receipt-text', views: ['gastos', 'ingresos', 'mensuales', 'tickets'] },
+  movimientos: { label: 'Movimientos', icon: 'receipt-text', views: ['gastos', 'ingresos', 'mensuales', 'tickets', 'importar'] },
   calendario: { label: 'Calendario', icon: 'calendar-days', views: ['calendario'] },
   dinero: { label: 'Mi dinero', icon: 'wallet', views: ['cuentas', 'ahorros'] },
   plan: { label: 'Planificación', icon: 'target', views: ['presupuestos', 'previsiones'] },
@@ -1903,6 +1906,7 @@ const VIEWS = {
   ingresos: ['Ingresos', () => 'Lo que has cobrado', renderIncomes, ['Nuevo ingreso', () => incomeForm()]],
   mensuales: ['Pagos fijos', () => 'Recibos, alquiler y suscripciones con aviso antes de cada cobro', renderRecurring, ['Nuevo pago fijo', () => recurringForm()]],
   tickets: ['Tickets', () => 'Escanea tickets y consulta su historial', (el) => renderReceipts(el), ['Escanear ticket', () => pickReceipt()]],
+  importar: ['Importar', () => 'Sube el extracto de tu banco y se apuntan todos los movimientos de golpe', (el) => renderImport(el), ['Nuevo gasto', () => addExpense()]],
   calendario: ['Calendario', () => 'Gastos, ingresos y pagos previstos', renderCalendar],
   cuentas: ['Cuentas', () => 'Tu dinero en cada cuenta, tarjeta y efectivo', (el) => renderAccounts(el), ['Nueva cuenta', () => accountForm()]],
   ahorros: ['Ahorros', () => 'Cuánto tienes guardado y para qué', renderSavings, ['Nueva hucha', () => savingForm()]],
@@ -1915,7 +1919,7 @@ const VIEWS = {
   admin: ['Administración', () => 'Usuarios, contraseñas, permisos y ajustes de la app', renderAdmin],
   descargar: ['Descargar app', () => 'Úsala en el móvil y en el ordenador', renderDownload],
 };
-const TAB_ICON = { gastos: 'receipt-text', ingresos: 'hand-coins', mensuales: 'repeat', tickets: 'scan-line', cuentas: 'landmark', ahorros: 'piggy-bank', presupuestos: 'target', previsiones: 'chart-line', ajustes: 'settings', seguridad: 'shield-check', admin: 'user-cog', descargar: 'download' };
+const TAB_ICON = { gastos: 'receipt-text', ingresos: 'hand-coins', mensuales: 'repeat', tickets: 'scan-line', importar: 'upload', cuentas: 'landmark', ahorros: 'piggy-bank', presupuestos: 'target', previsiones: 'chart-line', ajustes: 'settings', seguridad: 'shield-check', admin: 'user-cog', descargar: 'download' };
 function renderSubnav(v) {
   const g = GROUPS[groupOf(v)];
   const tabs = g.views.filter((x) => (x !== 'admin' || me.isAdmin) && (x !== 'descargar' || !IS_ELECTRON));

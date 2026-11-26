@@ -331,7 +331,7 @@ router.delete('/demo', h(async (req, res) => res.json({ removed: await demo.remo
 // ---------- Tus datos (RGPD) ----------
 router.get('/me/export', (req, res) => {
   const out = { exportedAt: new Date().toISOString(), user: { name: req.user.name, email: req.user.email, createdAt: req.user.createdAt, finance: req.user.finance || {}, notify: req.user.notify } };
-  for (const k of ['categories', 'accounts', 'expenses', 'incomes', 'transfers', 'recurring', 'budgets', 'savings', 'savingMoves', 'receipts', 'notifications', 'securityLog']) {
+  for (const k of ['categories', 'accounts', 'expenses', 'incomes', 'transfers', 'recurring', 'budgets', 'savings', 'savingMoves', 'receipts', 'notifications', 'securityLog', 'imports', 'importRules', 'importMappings']) {
     out[k] = mine(db[k], req).map(({ userId, ...x }) => x);
   }
   res.setHeader('Content-Disposition', `attachment; filename="mis-datos-${D.ymd(D.today())}.json"`);

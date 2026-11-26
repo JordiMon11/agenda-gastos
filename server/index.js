@@ -18,6 +18,8 @@ const finance = require('./finance');
 const admin = require('./admin');
 const receipts = require('./receipts');
 const planning = require('./planning');
+const imports = require('./imports');
+const openbanking = require('./openbanking');
 const R = require('./recurrence');
 const L = require('./ledger');
 const insights = require('./insights');
@@ -65,6 +67,7 @@ app.set('trust proxy', 1);
 app.disable('x-powered-by');
 app.use(S.securityHeaders);
 app.use('/api/receipts', express.json({ limit: '8mb' })); // fotos de tickets
+app.use('/api/imports', express.json({ limit: imports.JSON_LIMIT })); // extractos bancarios (solo en memoria)
 app.use(express.json({ limit: '200kb' }));
 app.use('/api', S.csrfGuard);
 app.use(express.static(path.join(ROOT, 'public'), {
@@ -75,6 +78,7 @@ app.use('/vendor', express.static(path.join(ROOT, 'node_modules', 'chart.js', 'd
 const longCache = { maxAge: '30d' };
 app.use('/vendor/tesseract', express.static(path.join(ROOT, 'node_modules', 'tesseract.js', 'dist'), longCache));
 app.use('/vendor/tesseract-core', express.static(path.join(ROOT, 'node_modules', 'tesseract.js-core'), longCache));
+app.use('/vendor/pdfjs', express.static(path.join(ROOT, 'node_modules', 'pdfjs-dist', 'build'), longCache));
 app.use('/vendor/tessdata', express.static(path.join(ROOT, 'node_modules', '@tesseract.js-data', 'spa', '4.0.0_best_int'), longCache));
 
 // ---------- Rutas públicas ----------
@@ -105,6 +109,8 @@ app.use('/api', finance.router);
 app.use('/api/admin', admin.router);
 app.use('/api', receipts.router);
 app.use('/api', planning.router);
+app.use('/api', imports.router);
+app.use('/api', openbanking.router);
 
 // ---------- Categorías ----------
 const mine = (list, req) => list.filter((x) => x.userId === req.user.id);
@@ -143,10 +149,11 @@ app.delete('/api/categories/:id', h(async (req, res) => {
 
 // ---------- Gastos ----------
 function cleanExpense(b, req) {
-  const amount = Number(b?.amount);
+  // Las devoluciones importadas del banco se guardan como gasto negativo (restan de su categoría)
+  const amount = b?.refund ? -Math.abs(Number(b?.amount)) : Number(b?.amount);
   const name = String(b?.name || '').trim().slice(0, 100);
   if (!name) throw new HttpError(400, 'El gasto necesita un nombre');
-  if (!(amount > 0)) throw new HttpError(400, 'El importe debe ser mayor que 0');
+  if (!(b?.refund ? amount < 0 : amount > 0)) throw new HttpError(400, 'El importe debe ser mayor que 0');
   if (!D.isYmd(b.date)) throw new HttpError(400, 'Fecha no válida');
   if (b.categoryId && !db.categories.some((c) => c.id === b.categoryId && c.userId === req.user.id))
     throw new HttpError(400, 'Categoría no válida');
@@ -156,6 +163,7 @@ function cleanExpense(b, req) {
   return {
     name,
     amount: round(amount),
+    ...(amount < 0 ? { refund: true } : {}),
     categoryId: b.categoryId || null,
     date: b.date,
     place: String(b.place || '').trim().slice(0, 100),
@@ -197,7 +205,7 @@ app.post('/api/expenses/:id/duplicate', h(async (req, res) => {
 }));
 app.put('/api/expenses/:id', h(async (req, res) => {
   const e = findMine(db.expenses, req);
-  Object.assign(e, cleanExpense(req.body, req));
+  Object.assign(e, cleanExpense({ ...req.body, refund: !!e.refund }, req));
   store.save();
   res.json(e);
 }));

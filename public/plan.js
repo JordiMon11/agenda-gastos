@@ -114,7 +114,7 @@ async function renderAccounts(el) {
   </div>
   <div class="toolbar" style="justify-content:space-between">
     <div class="muted" style="font-size:14px">El saldo se calcula con tus movimientos. Ajústalo si no coincide con el banco.</div>
-    <button class="btn" id="btnTransfer">${ic('arrow-left-right', 'sm')}Transferir entre cuentas</button>
+    <div class="btn-group"><button class="btn" id="btnImpAcc">${ic('upload', 'sm')}Importar extracto</button><button class="btn" id="btnTransfer">${ic('arrow-left-right', 'sm')}Transferir entre cuentas</button></div>
   </div>
   <div class="grid g3" id="accGrid">
     ${list.map((a) => `<div class="card acc-card" data-id="${a.id}">
@@ -141,6 +141,7 @@ async function renderAccounts(el) {
   </div>`;
   $('#emptyAcc')?.addEventListener('click', () => accountForm());
   $('#btnTransfer').onclick = () => transferForm();
+  $('#btnImpAcc').onclick = () => openImport();
   $('#accGrid').onclick = (ev) => {
     const b = ev.target.closest('button');
     if (!b) return;

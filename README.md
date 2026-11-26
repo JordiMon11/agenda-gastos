@@ -125,6 +125,44 @@ Botón **Escanear ticket** (arriba en el ordenador, icono de escáner en el móv
 - **Gratis por defecto:** la foto se lee en el propio dispositivo con OCR (Tesseract) y reglas para tickets españoles.
 - **Opcional, con IA (de pago):** con la variable `ANTHROPIC_API_KEY` el servidor usa Claude para leer el ticket. Si la IA falla, se usa el lector gratuito.
 
+## Importar movimientos del banco
+
+En **Movimientos → Importar** (también desde Inicio, Gastos y Cuentas). El usuario solo tiene que:
+
+1. **Elegir el archivo** que descarga de su banca online.
+2. **Elegir la cuenta** en la que se apuntan los movimientos.
+3. **Revisar** la tabla de movimientos detectados.
+4. Pulsar **CONFIRMAR E IMPORTAR MOVIMIENTOS**.
+
+**Formatos:** CSV, Excel (XLSX y XLS antiguo, también los «XLS» que en realidad son HTML o XML), PDF con texto, PDF escaneado y fotos (OCR en el propio dispositivo), OFX/QFX, CAMT.053 (XML ISO 20022) y Norma 43 (formato AEB de los bancos españoles).
+
+- **Bancos:** se reconoce el banco por el código de entidad del IBAN, el nombre del archivo o el contenido. Por ejemplo CaixaBank, BBVA, Santander, Sabadell, ING, Openbank, Bankinter, Unicaja, Abanca, Kutxabank, Ibercaja, Cajamar, EVO, Revolut o N26.
+- **Columnas:** si no se reconocen, aparece una pantalla para indicar qué es cada columna. Esa configuración se puede guardar para la próxima vez.
+- **Importes y fechas:** se leen en formato español (`1.250,50 €`, `-45,90`, `45,90-`). Los cargos nunca se confunden con los abonos. Si el extracto no indica el signo, se deduce por la evolución del saldo; si no hay saldo, la fila se marca para revisar.
+- **Clasificación gratuita:** se usan, por este orden:
+  1. tus reglas;
+  2. tu historial con ese comercio;
+  3. un diccionario de comercios españoles (Mercadona → Supermercado, Repsol → Gasolina, Netflix → Suscripciones…).
+
+  Si cambias una categoría al revisar, se guarda como regla. No se inventa ningún establecimiento.
+- **Tipos de movimiento:** gasto, pago con tarjeta, recibo, comisión, retirada e ingreso de efectivo, ingreso, devolución (enlazada con la compra original) y transferencia entre tus cuentas (no cuenta como gasto ni como ingreso).
+- **Pagos fijos:** si un cargo coincide con un pago fijo ya creado, se marca como pagado. Si se repite cada mes, se propone crearlo.
+- **Duplicados:** cada movimiento lleva una huella (cuenta + identificador del banco, o fecha + importe + descripción + saldo). Importar dos veces el mismo archivo no duplica nada.
+  - Los parecidos a un movimiento manual se muestran como «¿Duplicado?» y tú decides: no importarlo, vincularlo o importarlo igualmente.
+  - Nunca se borra nada que ya existiera.
+- **Historial de importaciones:** muestra el archivo, el banco, la cuenta, la fecha, las cifras, el estado y quién lo importó.
+  - Una importación se puede **revertir** (con confirmación) si no has modificado esos movimientos después.
+  - Queda un registro de cada importación y de cada reversión.
+- **Seguridad:**
+  - El extracto **no se guarda**: se lee en memoria y se descarta.
+  - Solo su dueño ve sus importaciones.
+  - Hay límite de tamaño (`IMPORT_MAX_MB`, por defecto 10 MB) y se rechazan los ejecutables y los XML con entidades.
+  - Los Excel se comprueban antes de descomprimirlos para evitar archivos «bomba».
+  - Ningún dato bancario se envía a servicios de IA.
+- **Conexión directa con el banco (futuro):** en `server/openbanking.js` está preparada la estructura para un proveedor PSD2 autorizado, solo de lectura y con consentimiento.
+  - Nunca se piden ni guardan contraseñas del banco, ni se hacen pagos.
+  - Los movimientos sincronizados pasarían por el mismo proceso de duplicados y clasificación.
+
 ## Asistente e inteligencia
 
 El asistente funciona **gratis y sin IA externa**: entiende la pregunta con reglas en español, consulta tus datos y **calcula las cifras en el servidor**. Así nunca inventa cantidades. Separación:

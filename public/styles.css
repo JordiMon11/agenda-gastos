@@ -1070,3 +1070,63 @@ dialog form { padding: 20px; }
   .li .row-actions { display: none; }
   .subnav a { padding: 8px 9px; font-size: 13px; }
 }
+
+/* ---------- Importar extractos bancarios ---------- */
+.hero-link { display: inline-flex; align-items: center; gap: 5px; color: #fff; background: rgb(255 255 255 / 16%); border-radius: 99px; padding: 5px 11px; font-weight: 600; font-size: 12.5px; margin-top: 4px; }
+.hero-link:hover { background: rgb(255 255 255 / 26%); }
+.imp-steps { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.imp-steps span { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 99px; background: var(--surface-3); color: var(--muted); }
+.imp-steps span.on { background: var(--primary); color: #fff; }
+.imp-steps span.done { background: var(--success-soft); color: var(--success); }
+.imp-pick { max-width: 760px; }
+.imp-drop { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding: 30px 18px; border: 2px dashed var(--border-strong); border-radius: 16px; cursor: pointer; transition: background .15s, border-color .15s; margin: 4px 0 14px; }
+.imp-drop:hover, .imp-drop.over { border-color: var(--primary); background: var(--primary-soft); }
+.imp-drop b { font-size: 15px; }
+.imp-drop small { color: var(--muted); font-size: 12.5px; }
+.imp-file { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); margin-bottom: 12px; }
+.imp-file > div { flex: 1; min-width: 0; }
+.imp-file small { display: block; color: var(--text-2); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; }
+.imp-sum { gap: 22px; }
+.imp-sum div b { font-size: 18px; }
+.imp-tools { margin-bottom: 10px; }
+.imp-wrap { max-height: 62vh; overflow: auto; }
+.imp-table { font-size: 13px; }
+.imp-table th { position: sticky; top: 0; background: var(--surface-2); z-index: 1; }
+.imp-table th.sortable { cursor: pointer; user-select: none; }
+.imp-table td { vertical-align: top; padding-top: 7px; padding-bottom: 7px; }
+.imp-table tr.off td { opacity: .5; }
+.imp-table tr.off td:first-child, .imp-table tr.off td:nth-child(7) { opacity: 1; }
+.imp-table input:not([type=checkbox]), .imp-table select { font: inherit; font-size: 12.5px; height: 30px; padding: 0 7px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); width: 100%; min-width: 0; }
+.imp-table select { min-width: 120px; }
+.imp-table .imp-date { width: 128px; }
+.imp-table .imp-date.bad { border-color: var(--danger); }
+.imp-desc { min-width: 220px; }
+.imp-desc small { display: block; color: var(--muted); font-size: 11.5px; margin-top: 3px; line-height: 1.35; }
+.imp-desc small .i { width: 11px; height: 11px; vertical-align: -1px; margin-right: 2px; }
+.imp-cp, .imp-dup { margin-top: 4px; }
+.imp-table .badge { font-size: 11.5px; padding: 3px 8px; }
+.imp-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.imp-actions.sticky { position: sticky; bottom: 0; background: var(--surface); padding: 10px 0 2px; z-index: 2; }
+.btn.big { height: 44px; padding: 0 20px; font-weight: 700; letter-spacing: .01em; }
+.imp-done { display: flex; gap: 14px; align-items: center; margin-bottom: 8px; }
+.imp-done > .i { width: 40px; height: 40px; color: var(--success); }
+.imp-done h3 { margin: 0; }
+.imp-done p { margin: 2px 0 0; }
+.imp-hist tr.click { cursor: pointer; }
+.imp-hist tr.click:hover td { background: var(--surface-2); }
+.imp-det { max-height: 300px; overflow-y: auto; overflow-x: hidden; }
+.imp-det .li b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.imp-det .li { gap: 8px; }
+.imp-map select { min-width: 130px; font: inherit; font-size: 12.5px; height: 30px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+@media (max-width: 900px) {
+  .imp-tools .seg { width: 100%; overflow-x: auto; }
+  .imp-sum { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 12px; }
+  .imp-sum div small { font-size: 11.5px; }
+  .imp-sum div b { font-size: 15px; }
+  .imp-file { flex-wrap: wrap; }
+  .imp-actions.sticky { flex-wrap: nowrap; }
+  .imp-actions .btn.big { white-space: normal; height: auto; min-height: 44px; padding: 6px 12px; font-size: 13px; line-height: 1.2; }
+  .imp-wrap { max-height: none; }
+  .imp-actions.sticky { bottom: 64px; }
+  .imp-actions .btn.big { flex: 1; }
+}
